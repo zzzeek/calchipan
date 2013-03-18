@@ -1,8 +1,7 @@
 from unittest import TestCase
 import pandas as pd
-import numpy as np
 from calhipan import dbapi
-from . import eq_, ne_
+from . import eq_
 
 
 class DBAPITest(TestCase):
