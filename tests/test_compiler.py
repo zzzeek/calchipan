@@ -18,7 +18,15 @@ class RoundTripTest(TestCase):
                 {"name": "jack", "fullname": "Jack"},
                 {"name": "wendy", "fullname": "Wendy"},
                 ])
-        return {"df1": df1, "df2": df2}
+        df3 = pd.DataFrame([
+                {"name": "ed", "data": "ed1"},
+                {"name": "ed", "data": "ed2"},
+                {"name": "ed", "data": "ed3"},
+                {"name": "jack", "data": "jack1"},
+                {"name": "jack", "data": "jack2"},
+                ])
+
+        return {"df1": df1, "df2": df2, "df3": df3}
 
     def _table_fixture(self):
         m = MetaData()
@@ -30,6 +38,11 @@ class RoundTripTest(TestCase):
         Table('df2', m,
                         Column('name', String),
                         Column('fullname', String))
+
+        Table('df3', m,
+                        Column('name', String),
+                        Column('data', String))
+
         return m.tables
 
 
@@ -84,6 +97,16 @@ class RoundTripTest(TestCase):
             (4, 'string: 4', 0.021892)]
         )
 
+    def test_labeling(self):
+        t1 = self._table_fixture()['df1']
+        stmt = select([t1.c.col1.label('q'), t1.c.col2.label('p')])
+        curs = self._exec_stmt(stmt)
+        eq_([c[0] for c in curs.description], ['q', 'p'])
+
+        eq_(curs.fetchall(),
+                [(0, 'string: 0'), (1, 'string: 1'), (2, 'string: 2'),
+                (3, 'string: 3'), (4, 'string: 4')])
+
     def test_selfref_join(self):
         t2 = self._table_fixture()['df2']
         t2a = t2.alias()
@@ -97,6 +120,34 @@ class RoundTripTest(TestCase):
         )
 
         eq_(
-            curs.description,
+            [c[0] for c in curs.description],
+            ['name', 'name_1']
+        )
+
+    def test_implicit_join_where(self):
+        tables = self._table_fixture()
+        df2, df3 = tables['df2'], tables['df3']
+
+        stmt = select([df2.c.name, df3.c.data]).\
+                    where(df2.c.name == df3.c.name).\
+                    where(df2.c.name == 'ed')
+        curs = self._exec_stmt(stmt)
+        eq_(
+            curs.fetchall(),
+            [('ed', 'ed1'), ('ed', 'ed2'), ('ed', 'ed3')]
+        )
+
+    def test_correlated_subquery_column(self):
+        tables = self._table_fixture()
+        df2, df3 = tables['df2'], tables['df3']
+
+        subq = select([df2.c.name]).where(df2.c.name == df3.c.name).as_scalar()
+        stmt = select([
+                    df3.c.data,
+                    subq
+                ])
+        curs = self._exec_stmt(stmt)
+        eq_(
+            curs.fetchall(),
             []
         )

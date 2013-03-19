@@ -34,8 +34,7 @@ class PandasCompiler(compiler.SQLCompiler):
 
         tablename = None
         table = column.table
-        if table is not None and include_table and table.named_with_column \
-                and not isinstance(table, sql.TableClause):
+        if table is not None and include_table and table.named_with_column:
             tablename = table.name
             if isinstance(tablename, sql._truncated_label):
                 tablename = self._truncated_identifier("alias", tablename)
@@ -75,9 +74,19 @@ class PandasCompiler(compiler.SQLCompiler):
                                     within_columns_clause=False,
                                     **kw)
 
+    def visit_clauselist(self, clauselist, **kwargs):
+        return ClauseListAdapter(
+                    [s for s in
+                    (c._compiler_dispatch(self, **kwargs)
+                    for c in clauselist.clauses)
+                    if s], clauselist.operator)
+
     def visit_table(self, table, asfrom=False, iscrud=False, ashint=False,
                         fromhints=None, **kwargs):
         return TableAdapter(table.name)
+
+    def visit_grouping(self, grouping, asfrom=False, **kwargs):
+        return grouping.element._compiler_dispatch(self, **kwargs)
 
     def visit_alias(self, alias, asfrom=False, ashint=False,
                                 iscrud=False,
@@ -189,7 +198,7 @@ class Adapter(object):
     pass
 
 class ColumnElementAdapter(Adapter):
-    def resolve_expression(self, df, params):
+    def resolve_expression(self, df, namespace, params):
         raise NotImplementedError()
 
 class ColumnAdapter(ColumnElementAdapter):
@@ -197,23 +206,20 @@ class ColumnAdapter(ColumnElementAdapter):
         self.name = name
         self.tablename = tablename
 
-    def resolve_expression(self, df, params):
+    def resolve_expression(self, df, namespace, params):
         return df[self.df_index]
 
     @property
     def df_index(self):
-        if self.tablename is None:
-            return self.name
-        else:
-            return "%s_cp_%s" % (self.name, self.tablename)
+        return "%s_cp_%s" % (self.name, self.tablename)
 
 class LabelAdapter(Adapter):
     def __init__(self, expression, name):
         self.expression = expression
         self.name = name
 
-    def resolve_expression(self, df, params):
-        return self.expression.resolve_expression(df, params)
+    def resolve_expression(self, df, namespace, params):
+        return self.expression.resolve_expression(df, namespace, params)
 
     @property
     def df_index(self):
@@ -226,7 +232,7 @@ class DerivedAdapter(FromAdapter):
     def __init__(self, dataframe):
         self.dataframe = dataframe
 
-    def resolve_dataframe(self, namespace, params):
+    def resolve_dataframe(self, namespace, params, names=True):
         return self.dataframe
 
     @property
@@ -237,8 +243,15 @@ class TableAdapter(FromAdapter):
     def __init__(self, tablename):
         self.tablename = tablename
 
-    def resolve_dataframe(self, namespace, params):
-        return namespace[self.tablename]
+    def resolve_dataframe(self, namespace, params, names=True):
+        df = namespace[self.tablename]
+        if names:
+            df = pd.DataFrame(
+                        dict(
+                            ("%s_cp_%s" % (k, self.tablename), df[k])
+                            for k in df.keys()
+                        ))
+        return df
 
     @property
     def suffix(self):
@@ -249,13 +262,15 @@ class AliasAdapter(FromAdapter):
         self.table = table
         self.aliasname = aliasname
 
-    def resolve_dataframe(self, namespace, params):
-        df = self.table.resolve_dataframe(namespace, params)
-        return pd.DataFrame(
+    def resolve_dataframe(self, namespace, params, names=True):
+        df = self.table.resolve_dataframe(namespace, params, names=False)
+        if names:
+            df = pd.DataFrame(
                         dict(
                             ("%s_cp_%s" % (k, self.aliasname), df[k])
                             for k in df.keys()
                         ))
+        return df
 
     @property
     def suffix(self):
@@ -267,17 +282,30 @@ class BinaryAdapter(ColumnElementAdapter):
         self.right = right
         self.operator = operator
 
-    def resolve_expression(self, df, params):
+    def resolve_expression(self, df, namespace, params):
         return self.operator(
-                    self.left.resolve_expression(df, params),
-                    self.right.resolve_expression(df, params),
+                    self.left.resolve_expression(df, namespace, params),
+                    self.right.resolve_expression(df, namespace, params),
+                )
+
+class ClauseListAdapter(ColumnElementAdapter):
+    def __init__(self, expressions, operator):
+        self.expressions = expressions
+        self.operator = operator
+
+    def resolve_expression(self, df, namespace, params):
+        return self.operator(
+                    *[
+                        expr.resolve_expression(df, namespace, params)
+                        for expr in self.expressions
+                    ]
                 )
 
 class BindParamAdapter(ColumnElementAdapter):
     def __init__(self, name):
         self.name = name
 
-    def resolve_expression(self, namespace, params):
+    def resolve_expression(self, df, namespace, params):
         return params[self.name]
 
 class SelectAdapter(FromAdapter):
@@ -291,17 +319,34 @@ class SelectAdapter(FromAdapter):
     def columns(self):
         return []
 
+    def resolve_expression(self, df, namespace, params):
+        return self(namespace, params)
+
     def __call__(self, namespace, params):
         product = self.dataframes[0]
         for df in self.dataframes[1:]:
             product = _cartesian(product, df, namespace, params)
         df = product.resolve_dataframe(namespace, params)
         if self.whereclause is not None:
-            df = df[self.whereclause.resolve_expression(df, params)]
-        return pd.DataFrame(
-                    dict(
-                        (c.df_index, c.resolve_expression(df, params))
-                        for c in self.columns))
+            df = df[self.whereclause.resolve_expression(df, namespace, params)]
+        nu = unique_name()
+        return pd.DataFrame.from_items(
+                    [
+                        (nu(c.name), c.resolve_expression(df, namespace, params))
+                        for c in self.columns
+                    ])
+
+import collections
+def unique_name():
+    names = collections.defaultdict(int)
+    def go(name):
+        count = names[name]
+        names[name] += 1
+        if count:
+            return "%s_%d" % (name, count)
+        else:
+            return name
+    return go
 
 def _cartesian(f1, f2, namespace, params):
     """produce a cartesian product.
