@@ -149,5 +149,36 @@ class RoundTripTest(TestCase):
         curs = self._exec_stmt(stmt)
         eq_(
             curs.fetchall(),
-            []
+            [('ed1', 'ed'), ('ed2', 'ed'), ('ed3', 'ed'),
+                ('jack1', 'jack'), ('jack2', 'jack')]
         )
+
+    def test_correlated_subquery_whereclause(self):
+        tables = self._table_fixture()
+        df2, df3 = tables['df2'], tables['df3']
+
+        subq = select([df2.c.name]).\
+                    where(df2.c.name == df3.c.name).\
+                    where(df3.c.data == "jack2").\
+                    as_scalar()
+        stmt = select([df2]).where(df2.c.name == subq)
+        curs = self._exec_stmt(stmt)
+        eq_(
+            curs.fetchall(),
+            [('jack', 'Jack')]
+        )
+
+    def test_uncorrelated_subquery_whereclause(self):
+        tables = self._table_fixture()
+        df2, df3 = tables['df2'], tables['df3']
+
+        subq = select([df2.c.name]).\
+                    where(df2.c.fullname == 'Jack').\
+                    as_scalar()
+        stmt = select([df3]).where(df3.c.name == subq)
+        curs = self._exec_stmt(stmt)
+        eq_(
+            curs.fetchall(),
+            [('jack', 'jack1'), ('jack', 'jack2')]
+        )
+

@@ -198,7 +198,7 @@ class Adapter(object):
     pass
 
 class ColumnElementAdapter(Adapter):
-    def resolve_expression(self, df, namespace, params):
+    def resolve_expression(self, product, namespace, params, clause):
         raise NotImplementedError()
 
 class ColumnAdapter(ColumnElementAdapter):
@@ -206,7 +206,8 @@ class ColumnAdapter(ColumnElementAdapter):
         self.name = name
         self.tablename = tablename
 
-    def resolve_expression(self, df, namespace, params):
+    def resolve_expression(self, product, namespace, params, clause):
+        df = product.resolve_dataframe(namespace, params)
         return df[self.df_index]
 
     @property
@@ -218,8 +219,9 @@ class LabelAdapter(Adapter):
         self.expression = expression
         self.name = name
 
-    def resolve_expression(self, df, namespace, params):
-        return self.expression.resolve_expression(df, namespace, params)
+    def resolve_expression(self, product, namespace, params, clause):
+        return self.expression.resolve_expression(
+                                        product, namespace, params, clause)
 
     @property
     def df_index(self):
@@ -282,10 +284,12 @@ class BinaryAdapter(ColumnElementAdapter):
         self.right = right
         self.operator = operator
 
-    def resolve_expression(self, df, namespace, params):
+    def resolve_expression(self, product, namespace, params, clause):
         return self.operator(
-                    self.left.resolve_expression(df, namespace, params),
-                    self.right.resolve_expression(df, namespace, params),
+                    self.left.resolve_expression(
+                                        product, namespace, params, clause),
+                    self.right.resolve_expression(
+                                        product, namespace, params, clause),
                 )
 
 class ClauseListAdapter(ColumnElementAdapter):
@@ -293,10 +297,11 @@ class ClauseListAdapter(ColumnElementAdapter):
         self.expressions = expressions
         self.operator = operator
 
-    def resolve_expression(self, df, namespace, params):
+    def resolve_expression(self, product, namespace, params, clause):
         return self.operator(
                     *[
-                        expr.resolve_expression(df, namespace, params)
+                        expr.resolve_expression(
+                                            product, namespace, params, clause)
                         for expr in self.expressions
                     ]
                 )
@@ -305,8 +310,11 @@ class BindParamAdapter(ColumnElementAdapter):
     def __init__(self, name):
         self.name = name
 
-    def resolve_expression(self, df, namespace, params):
+    def resolve_expression(self, product, namespace, params, clause):
         return params[self.name]
+
+WHERECLAUSE = object()
+COLUMNSCLAUSE = object()
 
 class SelectAdapter(FromAdapter):
     whereclause = None
@@ -319,20 +327,36 @@ class SelectAdapter(FromAdapter):
     def columns(self):
         return []
 
-    def resolve_expression(self, df, namespace, params):
-        return self(namespace, params)
+    def resolve_expression(self, product, namespace, params, clause):
+        return self(namespace, params, correlate=product, clause=clause)
 
-    def __call__(self, namespace, params):
+    def __call__(self, namespace, params, correlate=None, clause=None):
         product = self.dataframes[0]
         for df in self.dataframes[1:]:
             product = _cartesian(product, df, namespace, params)
+        if correlate:
+            product = _cartesian(product, correlate, namespace, params)
         df = product.resolve_dataframe(namespace, params)
+
         if self.whereclause is not None:
-            df = df[self.whereclause.resolve_expression(df, namespace, params)]
+            df = df[self.whereclause.resolve_expression(
+                            product, namespace, params, WHERECLAUSE)]
+            product = DerivedAdapter(df)
+        if correlate:
+            col = self.columns[0].resolve_expression(
+                            product, namespace, params, COLUMNSCLAUSE)
+            if clause is WHERECLAUSE:
+                return list(col)[0]
+            else:
+                return col.reset_index(drop=True)
         nu = unique_name()
         return pd.DataFrame.from_items(
                     [
-                        (nu(c.name), c.resolve_expression(df, namespace, params))
+                        (
+                            nu(c.name),
+                            c.resolve_expression(product, namespace,
+                                                    params, COLUMNSCLAUSE)
+                        )
                         for c in self.columns
                     ])
 
