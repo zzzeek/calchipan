@@ -151,6 +151,19 @@ class RoundTripTest(TestCase):
             [('ed', 'ed1'), ('ed', 'ed2'), ('ed', 'ed3')]
         )
 
+    def test_explicit_simple_join_reverse_onclause(self):
+        tables = self._table_fixture()
+        df2, df3 = tables['df2'], tables['df3']
+
+        stmt = select([df2.c.name, df3.c.data]).\
+                    select_from(df2.join(df3, df3.c.name == df2.c.name)).\
+                    where(df2.c.name == 'ed')
+        curs = self._exec_stmt(stmt)
+        eq_(
+            curs.fetchall(),
+            [('ed', 'ed1'), ('ed', 'ed2'), ('ed', 'ed3')]
+        )
+
     def test_explicit_simple_join_aliased(self):
         tables = self._table_fixture()
         df2, df3 = tables['df2'], tables['df3']

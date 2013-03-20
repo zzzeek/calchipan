@@ -267,6 +267,7 @@ class TableAdapter(FromAdapter):
         return df
 
 
+
 class JoinAdapter(FromAdapter):
     def __init__(self, left, right, onclause, isouter):
         self.left = left
@@ -293,14 +294,22 @@ class JoinAdapter(FromAdapter):
             if isinstance(comp, BinaryAdapter) and \
                 comp.operator is operators.eq and \
                 hasattr(comp.left, "df_index") and \
-                comp.left.df_index in df1 and \
-                hasattr(comp.right, "df_index") and \
-                    comp.right.df_index in df2:
-                straight_binaries.append(
-                    (comp.left.df_index, comp.right.df_index)
-                )
-            else:
-                remainder.append(comp)
+                    hasattr(comp.right, "df_index"):
+
+                if comp.left.df_index in df1 and \
+                        comp.right.df_index in df2:
+                    straight_binaries.append(
+                        (comp.left.df_index, comp.right.df_index)
+                    )
+                    continue
+                elif comp.right.df_index in df1 and \
+                        comp.left.df_index in df2:
+                    straight_binaries.append(
+                        (comp.right.df_index, comp.left.df_index)
+                    )
+                    continue
+
+            remainder.append(comp)
 
         if straight_binaries:
             left_on, right_on = zip(*straight_binaries)
