@@ -156,7 +156,7 @@ class RoundTripTest(TestCase):
         df2, df3 = tables['df2'], tables['df3']
 
         s1 = select([(df2.c.name + "hi").label('name')]).alias()
-        s2 = select([(df3.c.name + "hi").label('name')]).\
+        s2 = select([(df3.c.name + "hi").label('name'), df3.c.data]).\
                 where(or_(
                             df3.c.data == 'ed2',
                             df3.c.data == 'jack1',
@@ -164,14 +164,15 @@ class RoundTripTest(TestCase):
                         )).\
                 alias()
 
-        stmt = select([s1.c.name, s2.c.name]).\
+        stmt = select([s1.c.name, s2.c.name, s2.c.data]).\
             select_from(s1.join(s2, s1.c.name == s2.c.name))
 
 
         curs = self._exec_stmt(stmt)
         eq_(
             curs.fetchall(),
-            [('edhi', 'edhi'), ('jackhi', 'jackhi'), ('jackhi', 'jackhi')]
+            [('edhi', 'edhi', 'ed2'), ('jackhi', 'jackhi', 'jack1'),
+                ('jackhi', 'jackhi', 'jack2')]
         )
 
     def test_explicit_compound_join(self):
