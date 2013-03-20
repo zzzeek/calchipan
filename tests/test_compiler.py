@@ -222,6 +222,22 @@ class RoundTripTest(TestCase):
                 ('jack1', 'jack'), ('jack2', 'jack')]
         )
 
+    def test_correlated_subquery_column_wnull(self):
+        tables = self._table_fixture()
+        df2, df3 = tables['df2'], tables['df3']
+
+        subq = select([df3.c.name]).\
+                    where(df2.c.name == df3.c.name).\
+                    where(or_(df3.c.data == "jack2", df3.c.data == 'ed1')).\
+                    as_scalar()
+        stmt = select([df2, subq])
+        curs = self._exec_stmt(stmt)
+        eq_(
+            curs.fetchall(),
+            [('ed', 'Ed Jones', 'ed'), ('jack', 'Jack', 'jack'),
+                ('wendy', 'Wendy', None)]
+        )
+
     def test_correlated_subquery_whereclause(self):
         tables = self._table_fixture()
         df2, df3 = tables['df2'], tables['df3']
