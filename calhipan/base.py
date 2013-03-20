@@ -393,7 +393,24 @@ class SelectAdapter(FromAdapter):
         return self(namespace, params)
 
     def resolve_expression(self, product, namespace, params, clause):
-        return self(namespace, params, correlate=product, clause=clause)
+        # correlated subquery - resolve for every row.
+        # TODO: probably *dont* need to resolve for every row
+        # for an uncorrelated subquery, can detect that
+        p_df = product.resolve_dataframe(namespace, params)
+
+        # iterate through rows in dataframe and form one-row
+        # dataframes.  The ind:ind thing is the only way I could
+        # figure out to achieve this, might be an eaiser way.
+        things = []
+        for ind in p_df.index:
+            row = p_df.ix[ind:ind]
+            df = DerivedAdapter(row)
+            thing = self(namespace, params, correlate=df, clause=clause)
+
+            # return as a simple list of scalar values.
+            # the None is for those rows which we had no value
+            things.append(thing[0] if thing else None)
+        return things
 
     def __call__(self, namespace, params, correlate=None, clause=None):
         product = self.dataframes[0]
@@ -402,19 +419,14 @@ class SelectAdapter(FromAdapter):
         if correlate:
             product = _cartesian(product, correlate, namespace, params)
         df = product.resolve_dataframe(namespace, params)
-        df_pre_where = df   # for debugging only
         if self.whereclause is not None:
             df = df[self.whereclause.resolve_expression(
                             product, namespace, params, WHERECLAUSE)]
-            # perhaps do an outer join here of original
-            # correlate with the where'd df
 
         product = DerivedAdapter(df)
         if correlate:
             col = self.columns[0].resolve_expression(
                             product, namespace, params, COLUMNSCLAUSE)
-            # this is wrong for WHERE, need to produce a dataframe
-            # that matches the enclosing query
             return col.reset_index(drop=True)
         nu = unique_name()
         return pd.DataFrame.from_items(

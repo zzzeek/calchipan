@@ -234,8 +234,9 @@ class RoundTripTest(TestCase):
         curs = self._exec_stmt(stmt)
         eq_(
             curs.fetchall(),
-            [('jack', 'Jack')]
+            [('ed', 'Ed Jones'), ('jack', 'Jack')]
         )
+
 
     def test_uncorrelated_subquery_whereclause(self):
         tables = self._table_fixture()
