@@ -208,7 +208,7 @@ class Adapter(object):
     pass
 
 class ColumnElementAdapter(Adapter):
-    def resolve_expression(self, product, namespace, params, clause):
+    def resolve_expression(self, product, namespace, params):
         raise NotImplementedError()
 
 class ColumnAdapter(ColumnElementAdapter):
@@ -216,7 +216,7 @@ class ColumnAdapter(ColumnElementAdapter):
         self.name = name
         self.tablename = tablename
 
-    def resolve_expression(self, product, namespace, params, clause):
+    def resolve_expression(self, product, namespace, params):
         if product is None:
             df = TableAdapter(self.tablename).\
                         resolve_dataframe(namespace, params)
@@ -233,9 +233,9 @@ class LabelAdapter(Adapter):
         self.expression = expression
         self.name = name
 
-    def resolve_expression(self, product, namespace, params, clause):
+    def resolve_expression(self, product, namespace, params):
         return self.expression.resolve_expression(
-                                        product, namespace, params, clause)
+                                        product, namespace, params)
 
     @property
     def df_index(self):
@@ -321,7 +321,7 @@ class JoinAdapter(FromAdapter):
                 df1 = _cartesian_dataframe(df1, df2)
             df1 = df1[remainder.resolve_expression(DerivedAdapter(df1),
                                                 namespace,
-                                                    params, WHERECLAUSE)]
+                                                    params)]
         return df1
 
 
@@ -347,10 +347,10 @@ class BinaryAdapter(ColumnElementAdapter):
         self.right = right
         self.operator = operator
 
-    def resolve_expression(self, product, namespace, params, clause):
+    def resolve_expression(self, product, namespace, params):
         return self.operator(
-                    self.left.resolve_expression(product, namespace, params, clause),
-                    self.right.resolve_expression(product, namespace, params, clause),
+                    self.left.resolve_expression(product, namespace, params),
+                    self.right.resolve_expression(product, namespace, params),
                 )
 
 class ClauseListAdapter(ColumnElementAdapter):
@@ -358,12 +358,12 @@ class ClauseListAdapter(ColumnElementAdapter):
         self.expressions = expressions
         self.operator = operator
 
-    def resolve_expression(self, product, namespace, params, clause):
+    def resolve_expression(self, product, namespace, params):
         return functools.reduce(
                     self.operator,
                     [
                         expr.resolve_expression(
-                                            product, namespace, params, clause)
+                                            product, namespace, params)
                         for expr in self.expressions
                     ]
                 )
@@ -372,11 +372,8 @@ class BindParamAdapter(ColumnElementAdapter):
     def __init__(self, name):
         self.name = name
 
-    def resolve_expression(self, product, namespace, params, clause):
+    def resolve_expression(self, product, namespace, params):
         return params[self.name]
-
-WHERECLAUSE = object()
-COLUMNSCLAUSE = object()
 
 class SelectAdapter(FromAdapter):
     whereclause = None
@@ -392,7 +389,7 @@ class SelectAdapter(FromAdapter):
     def resolve_dataframe(self, namespace, params, names=True):
         return self(namespace, params)
 
-    def resolve_expression(self, product, namespace, params, clause):
+    def resolve_expression(self, product, namespace, params):
         # correlated subquery - resolve for every row.
         # TODO: probably *dont* need to resolve for every row
         # for an uncorrelated subquery, can detect that
@@ -405,14 +402,14 @@ class SelectAdapter(FromAdapter):
         for ind in p_df.index:
             row = p_df.ix[ind:ind]
             df = DerivedAdapter(row)
-            thing = self(namespace, params, correlate=df, clause=clause)
+            thing = self(namespace, params, correlate=df)
 
             # return as a simple list of scalar values.
             # the None is for those rows which we had no value
             things.append(thing[0] if thing else None)
         return things
 
-    def __call__(self, namespace, params, correlate=None, clause=None):
+    def __call__(self, namespace, params, correlate=None):
         product = self.dataframes[0]
         for df in self.dataframes[1:]:
             product = _cartesian(product, df, namespace, params)
@@ -421,12 +418,12 @@ class SelectAdapter(FromAdapter):
         df = product.resolve_dataframe(namespace, params)
         if self.whereclause is not None:
             df = df[self.whereclause.resolve_expression(
-                            product, namespace, params, WHERECLAUSE)]
+                            product, namespace, params)]
 
         product = DerivedAdapter(df)
         if correlate:
             col = self.columns[0].resolve_expression(
-                            product, namespace, params, COLUMNSCLAUSE)
+                            product, namespace, params)
             return col.reset_index(drop=True)
         nu = unique_name()
         return pd.DataFrame.from_items(
@@ -434,7 +431,7 @@ class SelectAdapter(FromAdapter):
                         (
                             nu(c.name),
                             c.resolve_expression(product, namespace,
-                                                    params, COLUMNSCLAUSE)
+                                                    params)
                         )
                         for c in self.columns
                     ])
