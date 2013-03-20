@@ -402,10 +402,13 @@ class SelectAdapter(FromAdapter):
         if correlate:
             product = _cartesian(product, correlate, namespace, params)
         df = product.resolve_dataframe(namespace, params)
-
+        df_pre_where = df   # for debugging only
         if self.whereclause is not None:
             df = df[self.whereclause.resolve_expression(
                             product, namespace, params, WHERECLAUSE)]
+            # perhaps do an outer join here of original
+            # correlate with the where'd df
+
         product = DerivedAdapter(df)
         if correlate:
             col = self.columns[0].resolve_expression(
