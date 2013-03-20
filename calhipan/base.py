@@ -410,10 +410,9 @@ class SelectAdapter(FromAdapter):
         if correlate:
             col = self.columns[0].resolve_expression(
                             product, namespace, params, COLUMNSCLAUSE)
-            if clause is WHERECLAUSE:
-                return list(col)[0]
-            else:
-                return col.reset_index(drop=True)
+            # this is wrong for WHERE, need to produce a dataframe
+            # that matches the enclosing query
+            return col.reset_index(drop=True)
         nu = unique_name()
         return pd.DataFrame.from_items(
                     [
