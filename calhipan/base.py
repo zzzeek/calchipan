@@ -77,11 +77,8 @@ class PandasCompiler(compiler.SQLCompiler):
                                     **kw)
 
     def visit_concat_op_binary(self, binary, operator, **kw):
-        return BinaryAdapter(
-                    binary.left._compiler_dispatch(self, **kw),
-                    binary.right._compiler_dispatch(self, **kw),
-                    operators.add
-                )
+        kw['override_op'] = operators.add
+        return self.visit_binary(binary, **kw)
 
     def visit_clauselist(self, clauselist, **kwargs):
         return ClauseListAdapter(
@@ -123,8 +120,8 @@ class PandasCompiler(compiler.SQLCompiler):
                     join.isouter
                 )
 
-    def visit_binary(self, binary, **kw):
-        operator = binary.operator
+    def visit_binary(self, binary, override_op=None, **kw):
+        operator = override_op or binary.operator
 
         disp = getattr(self, "visit_%s_binary" % operator.__name__, None)
         if disp:
