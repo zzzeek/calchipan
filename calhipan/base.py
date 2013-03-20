@@ -3,8 +3,6 @@ from sqlalchemy import exc
 from sqlalchemy.sql import expression as sql, operators
 from sqlalchemy import util
 from sqlalchemy.engine import default
-import numpy as np
-import pandas as pd
 import functools
 
 
@@ -208,7 +206,7 @@ class Adapter(object):
     pass
 
 class ColumnElementAdapter(Adapter):
-    def resolve_expression(self, product, namespace, params):
+    def resolve_expression(self, trace, product, namespace, params):
         raise NotImplementedError()
 
 class ColumnAdapter(ColumnElementAdapter):
@@ -216,13 +214,13 @@ class ColumnAdapter(ColumnElementAdapter):
         self.name = name
         self.tablename = tablename
 
-    def resolve_expression(self, product, namespace, params):
+    def resolve_expression(self, trace, product, namespace, params):
         if product is None:
             df = TableAdapter(self.tablename).\
-                        resolve_dataframe(namespace, params)
+                        resolve_dataframe(trace, namespace, params)
         else:
-            df = product.resolve_dataframe(namespace, params)
-        return df[self.df_index]
+            df = product.resolve_dataframe(trace, namespace, params)
+        return trace.df_getitem(df, self.df_index)
 
     @property
     def df_index(self):
@@ -233,8 +231,9 @@ class LabelAdapter(Adapter):
         self.expression = expression
         self.name = name
 
-    def resolve_expression(self, product, namespace, params):
+    def resolve_expression(self, trace, product, namespace, params):
         return self.expression.resolve_expression(
+                                        trace,
                                         product, namespace, params)
 
     @property
@@ -248,7 +247,7 @@ class DerivedAdapter(FromAdapter):
     def __init__(self, dataframe):
         self.dataframe = dataframe
 
-    def resolve_dataframe(self, namespace, params, names=True):
+    def resolve_dataframe(self, trace, namespace, params, names=True):
         return self.dataframe
 
 
@@ -256,10 +255,10 @@ class TableAdapter(FromAdapter):
     def __init__(self, tablename):
         self.tablename = tablename
 
-    def resolve_dataframe(self, namespace, params, names=True):
+    def resolve_dataframe(self, trace, namespace, params, names=True):
         df = namespace[self.tablename]
         if names:
-            df = pd.DataFrame(
+            df = trace.dataframe(
                         dict(
                             ("%s_cp_%s" % (k, self.tablename), df[k])
                             for k in df.keys()
@@ -275,9 +274,9 @@ class JoinAdapter(FromAdapter):
         self.onclause = onclause
         self.isouter = isouter
 
-    def resolve_dataframe(self, namespace, params, names=True):
-        df1, df2 = self.left.resolve_dataframe(namespace, params), \
-                        self.right.resolve_dataframe(namespace, params)
+    def resolve_dataframe(self, trace, namespace, params, names=True):
+        df1, df2 = self.left.resolve_dataframe(trace, namespace, params), \
+                        self.right.resolve_dataframe(trace, namespace, params)
 
         straight_binaries = []
         remainder = []
@@ -313,7 +312,7 @@ class JoinAdapter(FromAdapter):
 
         if straight_binaries:
             left_on, right_on = zip(*straight_binaries)
-            df1 = pd.merge(df1, df2, left_on=left_on, right_on=right_on)
+            df1 = trace.merge(df1, df2, left_on=left_on, right_on=right_on)
 
         # for everything else, use cartesian product
         # plus expressions
@@ -327,10 +326,9 @@ class JoinAdapter(FromAdapter):
             # do a cartesian.... is this a little bit like,
             # "things are more efficient if we happened to join on the index"?
             if not straight_binaries:
-                df1 = _cartesian_dataframe(df1, df2)
-            df1 = df1[remainder.resolve_expression(DerivedAdapter(df1),
-                                                namespace,
-                                                    params)]
+                df1 = _cartesian_dataframe(trace, df1, df2)
+            df1 = trace.df_getitem(df1, remainder.resolve_expression(trace,
+                    DerivedAdapter(df1), namespace, params))
         return df1
 
 
@@ -340,10 +338,10 @@ class AliasAdapter(FromAdapter):
         self.table = table
         self.aliasname = aliasname
 
-    def resolve_dataframe(self, namespace, params, names=True):
-        df = self.table.resolve_dataframe(namespace, params, names=False)
+    def resolve_dataframe(self, trace, namespace, params, names=True):
+        df = self.table.resolve_dataframe(trace, namespace, params, names=False)
         if names:
-            df = pd.DataFrame(
+            df = trace.dataframe(
                         dict(
                             ("%s_cp_%s" % (k, self.aliasname), df[k])
                             for k in df.keys()
@@ -356,10 +354,10 @@ class BinaryAdapter(ColumnElementAdapter):
         self.right = right
         self.operator = operator
 
-    def resolve_expression(self, product, namespace, params):
+    def resolve_expression(self, trace, product, namespace, params):
         return self.operator(
-                    self.left.resolve_expression(product, namespace, params),
-                    self.right.resolve_expression(product, namespace, params),
+                    self.left.resolve_expression(trace, product, namespace, params),
+                    self.right.resolve_expression(trace, product, namespace, params),
                 )
 
 class ClauseListAdapter(ColumnElementAdapter):
@@ -367,11 +365,12 @@ class ClauseListAdapter(ColumnElementAdapter):
         self.expressions = expressions
         self.operator = operator
 
-    def resolve_expression(self, product, namespace, params):
+    def resolve_expression(self, trace, product, namespace, params):
         return functools.reduce(
                     self.operator,
                     [
                         expr.resolve_expression(
+                                            trace,
                                             product, namespace, params)
                         for expr in self.expressions
                     ]
@@ -381,7 +380,7 @@ class BindParamAdapter(ColumnElementAdapter):
     def __init__(self, name):
         self.name = name
 
-    def resolve_expression(self, product, namespace, params):
+    def resolve_expression(self, trace, product, namespace, params):
         return params[self.name]
 
 class SelectAdapter(FromAdapter):
@@ -395,51 +394,53 @@ class SelectAdapter(FromAdapter):
     def columns(self):
         return []
 
-    def resolve_dataframe(self, namespace, params, names=True):
-        return self(namespace, params)
+    def resolve_dataframe(self, trace, namespace, params, names=True):
+        return self(trace, namespace, params)
 
-    def resolve_expression(self, product, namespace, params):
+    def resolve_expression(self, trace, product, namespace, params):
         # correlated subquery - resolve for every row.
         # TODO: probably *dont* need to resolve for every row
         # for an uncorrelated subquery, can detect that
-        p_df = product.resolve_dataframe(namespace, params)
+        p_df = product.resolve_dataframe(trace, namespace, params)
 
         # iterate through rows in dataframe and form one-row
         # dataframes.  The ind:ind thing is the only way I could
         # figure out to achieve this, might be an eaiser way.
         things = []
-        for ind in p_df.index:
-            row = p_df.ix[ind:ind]
+        for ind in trace.df_index(p_df):
+            row = trace.df_ix_getitem(p_df, slice(ind, ind))
             df = DerivedAdapter(row)
-            thing = self(namespace, params, correlate=df)
+            thing = self(trace, namespace, params, correlate=df)
 
             # return as a simple list of scalar values.
             # the None is for those rows which we had no value
             things.append(thing[0] if thing else None)
         return things
 
-    def __call__(self, namespace, params, correlate=None):
+    def __call__(self, trace, namespace, params, correlate=None):
         product = self.dataframes[0]
         for df in self.dataframes[1:]:
-            product = _cartesian(product, df, namespace, params)
+            product = _cartesian(trace, product, df, namespace, params)
         if correlate:
-            product = _cartesian(product, correlate, namespace, params)
-        df = product.resolve_dataframe(namespace, params)
+            product = _cartesian(trace, product, correlate, namespace, params)
+        df = product.resolve_dataframe(trace, namespace, params)
         if self.whereclause is not None:
-            df = df[self.whereclause.resolve_expression(
-                            product, namespace, params)]
+            df = trace.df_getitem(df, self.whereclause.resolve_expression(
+                            trace,
+                            product, namespace, params))
 
         product = DerivedAdapter(df)
         if correlate:
             col = self.columns[0].resolve_expression(
+                            trace,
                             product, namespace, params)
-            return col.reset_index(drop=True)
+            return trace.reset_index(col, drop=True)
         nu = unique_name()
-        return pd.DataFrame.from_items(
+        return trace.df_from_items(
                     [
                         (
                             nu(c.name),
-                            c.resolve_expression(product, namespace,
+                            c.resolve_expression(trace, product, namespace,
                                                     params)
                         )
                         for c in self.columns
@@ -457,7 +458,7 @@ def unique_name():
             return name
     return go
 
-def _cartesian(f1, f2, namespace, params):
+def _cartesian(trace, f1, f2, namespace, params):
     """produce a cartesian product.
 
     This is to support multiple FROM clauses against a WHERE.
@@ -467,18 +468,18 @@ def _cartesian(f1, f2, namespace, params):
     at least.
 
     """
-    df1, df2 = f1.resolve_dataframe(namespace, params), \
-                    f2.resolve_dataframe(namespace, params)
+    df1, df2 = f1.resolve_dataframe(trace, namespace, params), \
+                    f2.resolve_dataframe(trace, namespace, params)
 
     return DerivedAdapter(
-                _cartesian_dataframe(df1, df2)
+                _cartesian_dataframe(trace, df1, df2)
             )
 
 
-def _cartesian_dataframe(df1, df2):
+def _cartesian_dataframe(trace, df1, df2):
     if '_calhipan_ones' not in df1:
-        df1['_calhipan_ones'] = np.ones(len(df1))
+        df1['_calhipan_ones'] = trace.np_ones(len(df1))
     if '_calhipan_ones' not in df2:
-        df2['_calhipan_ones'] = np.ones(len(df2))
-    return pd.merge(df1, df2, on='_calhipan_ones')
+        df2['_calhipan_ones'] = trace.np_ones(len(df2))
+    return trace.merge(df1, df2, on='_calhipan_ones')
 

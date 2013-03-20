@@ -219,6 +219,23 @@ class RoundTripTest(TestCase):
             [('ed', 'ed1'), ('ed', 'ed2'), ('ed', 'ed3')]
         )
 
+    def test_explicit_join_no_straight(self):
+        tables = self._table_fixture()
+        df2, df3 = tables['df2'], tables['df3']
+
+        stmt = select([df2.c.name, df3.c.data]).\
+                    select_from(df2.join(df3,
+                            df2.c.name > df3.c.name)
+                        )
+        curs = self._exec_stmt(stmt)
+        eq_(
+            curs.fetchall(),
+            [('jack', 'ed1'), ('jack', 'ed2'), ('jack', 'ed3'),
+            ('wendy', 'ed1'), ('wendy', 'ed2'), ('wendy', 'ed3'),
+            ('wendy', 'jack1'), ('wendy', 'jack2')]
+        )
+
+
     def test_correlated_subquery_column(self):
         tables = self._table_fixture()
         df2, df3 = tables['df2'], tables['df3']

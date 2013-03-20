@@ -21,7 +21,7 @@ class DBAPITest(TestCase):
         return {"df1": df1, "df2": df2}
 
     def test_simple_statement(self):
-        def stmt(namespace, params):
+        def stmt(trace, namespace, params):
             return namespace["df1"][["col1", "col2", "col3"]]
 
         conn = dbapi.connect(self._simple_fixture())
@@ -35,7 +35,7 @@ class DBAPITest(TestCase):
         )
 
     def test_description(self):
-        def stmt(namespace, params):
+        def stmt(trace, namespace, params):
             return namespace["df1"][["col1", "col2", "col3"]]
 
         conn = dbapi.connect(self._simple_fixture())
