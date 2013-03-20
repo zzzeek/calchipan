@@ -1,6 +1,6 @@
 from sqlalchemy.sql import compiler
 from sqlalchemy import exc
-from sqlalchemy.sql import expression as sql
+from sqlalchemy.sql import expression as sql, operators
 from sqlalchemy import util
 from sqlalchemy.engine import default
 import numpy as np
@@ -106,6 +106,14 @@ class PandasCompiler(compiler.SQLCompiler):
         else:
             return alias.original._compiler_dispatch(self, **kwargs)
 
+    def visit_join(self, join, asfrom=False, **kwargs):
+        return JoinAdapter(
+                    join.left._compiler_dispatch(self, asfrom=True, **kwargs),
+                    join.right._compiler_dispatch(self, asfrom=True, **kwargs),
+                    join.onclause._compiler_dispatch(self, **kwargs),
+                    join.isouter
+                )
+
     def visit_binary(self, binary, **kw):
         operator = binary.operator
 
@@ -207,7 +215,11 @@ class ColumnAdapter(ColumnElementAdapter):
         self.tablename = tablename
 
     def resolve_expression(self, product, namespace, params, clause):
-        df = product.resolve_dataframe(namespace, params)
+        if product is None:
+            df = TableAdapter(self.tablename).\
+                        resolve_dataframe(namespace, params)
+        else:
+            df = product.resolve_dataframe(namespace, params)
         return df[self.df_index]
 
     @property
@@ -259,6 +271,59 @@ class TableAdapter(FromAdapter):
     def suffix(self):
         return "_cp_%s" % self.tablename
 
+class JoinAdapter(FromAdapter):
+    def __init__(self, left, right, onclause, isouter):
+        self.left = left
+        self.right = right
+        self.onclause = onclause
+        self.isouter = isouter
+
+    def resolve_dataframe(self, namespace, params, names=True):
+        df1, df2 = self.left.resolve_dataframe(namespace, params), \
+                        self.right.resolve_dataframe(namespace, params)
+
+        straight_binaries = []
+        remainder = []
+        if isinstance(self.onclause, ClauseListAdapter) and \
+                self.onclause.operator is operators.and_:
+            comparisons = self.onclause.expressions
+        else:
+            comparisons = [self.onclause]
+
+        for comp in comparisons:
+            if isinstance(comp, BinaryAdapter) and \
+                comp.operator is operators.eq and \
+                hasattr(comp.left, "df_index") and \
+                comp.left.df_index in df1 and \
+                hasattr(comp.right, "df_index") and \
+                    comp.right.df_index in df2:
+                straight_binaries.append(
+                    (comp.left.df_index, comp.right.df_index)
+                )
+            else:
+                remainder.append(comp)
+
+        if straight_binaries:
+            left_on, right_on = zip(*straight_binaries)
+            df1 = pd.merge(df1, df2, left_on=left_on, right_on=right_on)
+
+        if remainder:
+            if len(remainder) > 1:
+                remainder = ClauseListAdapter(remainder, operators.and_)
+            else:
+                remainder = remainder[0]
+
+            df1 = _cartesian_dataframe(df1, df2)
+            df1 = df1[remainder.resolve_expression(DerivedAdapter(df1),
+                                                namespace,
+                                                    params, WHERECLAUSE)]
+        return df1
+
+    @property
+    def suffix(self):
+        return "should_not_use"
+
+
 class AliasAdapter(FromAdapter):
     def __init__(self, table, aliasname):
         self.table = table
@@ -286,10 +351,8 @@ class BinaryAdapter(ColumnElementAdapter):
 
     def resolve_expression(self, product, namespace, params, clause):
         return self.operator(
-                    self.left.resolve_expression(
-                                        product, namespace, params, clause),
-                    self.right.resolve_expression(
-                                        product, namespace, params, clause),
+                    self.left.resolve_expression(product, namespace, params, clause),
+                    self.right.resolve_expression(product, namespace, params, clause),
                 )
 
 class ClauseListAdapter(ColumnElementAdapter):
@@ -385,11 +448,15 @@ def _cartesian(f1, f2, namespace, params):
     df1, df2 = f1.resolve_dataframe(namespace, params), \
                     f2.resolve_dataframe(namespace, params)
 
+    return DerivedAdapter(
+                _cartesian_dataframe(df1, df2)
+            )
+
+
+def _cartesian_dataframe(df1, df2):
     if '_calhipan_ones' not in df1:
         df1['_calhipan_ones'] = np.ones(len(df1))
     if '_calhipan_ones' not in df2:
         df2['_calhipan_ones'] = np.ones(len(df2))
-
-    return DerivedAdapter(pd.merge(df1, df2, on='_calhipan_ones',
-                suffixes=(f1.suffix, f2.suffix)))
+    return pd.merge(df1, df2, on='_calhipan_ones')
 
