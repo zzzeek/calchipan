@@ -5,6 +5,8 @@ from sqlalchemy import util
 from sqlalchemy.engine import default
 import numpy as np
 import pandas as pd
+import functools
+
 
 class PandasCompiler(compiler.SQLCompiler):
     def __init__(self, *arg, **kw):
@@ -74,6 +76,13 @@ class PandasCompiler(compiler.SQLCompiler):
                                     within_columns_clause=False,
                                     **kw)
 
+    def visit_concat_op_binary(self, binary, operator, **kw):
+        return BinaryAdapter(
+                    binary.left._compiler_dispatch(self, **kw),
+                    binary.right._compiler_dispatch(self, **kw),
+                    operators.add
+                )
+
     def visit_clauselist(self, clauselist, **kwargs):
         return ClauseListAdapter(
                     [s for s in
@@ -117,19 +126,15 @@ class PandasCompiler(compiler.SQLCompiler):
     def visit_binary(self, binary, **kw):
         operator = binary.operator
 
-        # TODO: special dispatch
-        #disp = getattr(self, "visit_%s_binary" % operator.__name__, None)
-        #if disp:
-        #    return disp(binary, operator, **kw)
-        #else:
-        #    return self._generate_generic_binary(binary,
-        #                        OPERATORS[operator], **kw)
-
-        return BinaryAdapter(
-                    binary.left._compiler_dispatch(self, **kw),
-                    binary.right._compiler_dispatch(self, **kw),
-                    operator
-                )
+        disp = getattr(self, "visit_%s_binary" % operator.__name__, None)
+        if disp:
+            return disp(binary, operator, **kw)
+        else:
+            return BinaryAdapter(
+                        binary.left._compiler_dispatch(self, **kw),
+                        binary.right._compiler_dispatch(self, **kw),
+                        operator
+                    )
 
 
     def bindparam_string(self, name, **kw):
@@ -249,9 +254,6 @@ class DerivedAdapter(FromAdapter):
     def resolve_dataframe(self, namespace, params, names=True):
         return self.dataframe
 
-    @property
-    def suffix(self):
-        return "_cp_%d" % id(self)
 
 class TableAdapter(FromAdapter):
     def __init__(self, tablename):
@@ -267,9 +269,6 @@ class TableAdapter(FromAdapter):
                         ))
         return df
 
-    @property
-    def suffix(self):
-        return "_cp_%s" % self.tablename
 
 class JoinAdapter(FromAdapter):
     def __init__(self, left, right, onclause, isouter):
@@ -290,6 +289,9 @@ class JoinAdapter(FromAdapter):
         else:
             comparisons = [self.onclause]
 
+        # extract comparisons like this:
+        # col1 == col2 AND col3 == col4 AND ...
+        # use pd.merge() for those
         for comp in comparisons:
             if isinstance(comp, BinaryAdapter) and \
                 comp.operator is operators.eq and \
@@ -307,21 +309,24 @@ class JoinAdapter(FromAdapter):
             left_on, right_on = zip(*straight_binaries)
             df1 = pd.merge(df1, df2, left_on=left_on, right_on=right_on)
 
+        # for everything else, use cartesian product
+        # plus expressions
         if remainder:
             if len(remainder) > 1:
                 remainder = ClauseListAdapter(remainder, operators.and_)
             else:
                 remainder = remainder[0]
 
-            df1 = _cartesian_dataframe(df1, df2)
+            # if we haven't joined them together yet,
+            # do a cartesian.... is this a little bit like,
+            # "things are more efficient if we happened to join on the index"?
+            if not straight_binaries:
+                df1 = _cartesian_dataframe(df1, df2)
             df1 = df1[remainder.resolve_expression(DerivedAdapter(df1),
                                                 namespace,
                                                     params, WHERECLAUSE)]
         return df1
 
-    @property
-    def suffix(self):
-        return "should_not_use"
 
 
 class AliasAdapter(FromAdapter):
@@ -338,10 +343,6 @@ class AliasAdapter(FromAdapter):
                             for k in df.keys()
                         ))
         return df
-
-    @property
-    def suffix(self):
-        return "_cp_%s" % self.aliasname
 
 class BinaryAdapter(ColumnElementAdapter):
     def __init__(self, left, right, operator):
@@ -361,8 +362,9 @@ class ClauseListAdapter(ColumnElementAdapter):
         self.operator = operator
 
     def resolve_expression(self, product, namespace, params, clause):
-        return self.operator(
-                    *[
+        return functools.reduce(
+                    self.operator,
+                    [
                         expr.resolve_expression(
                                             product, namespace, params, clause)
                         for expr in self.expressions
@@ -390,6 +392,9 @@ class SelectAdapter(FromAdapter):
     def columns(self):
         return []
 
+    def resolve_dataframe(self, namespace, params, names=True):
+        return self(namespace, params)
+
     def resolve_expression(self, product, namespace, params, clause):
         return self(namespace, params, correlate=product, clause=clause)
 
@@ -404,7 +409,7 @@ class SelectAdapter(FromAdapter):
         if self.whereclause is not None:
             df = df[self.whereclause.resolve_expression(
                             product, namespace, params, WHERECLAUSE)]
-            product = DerivedAdapter(df)
+        product = DerivedAdapter(df)
         if correlate:
             col = self.columns[0].resolve_expression(
                             product, namespace, params, COLUMNSCLAUSE)

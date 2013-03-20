@@ -2,7 +2,8 @@ from unittest import TestCase
 import pandas as pd
 from calhipan import dbapi, base
 from . import eq_
-from sqlalchemy import Table, Column, Integer, Float, String, MetaData, select
+from sqlalchemy import Table, Column, Integer, Float, \
+        String, MetaData, select, and_, or_
 
 class RoundTripTest(TestCase):
     def _simple_fixture(self):
@@ -137,13 +138,67 @@ class RoundTripTest(TestCase):
             [('ed', 'ed1'), ('ed', 'ed2'), ('ed', 'ed3')]
         )
 
-    def test_explicit_join(self):
+    def test_explicit_simple_join(self):
         tables = self._table_fixture()
         df2, df3 = tables['df2'], tables['df3']
 
         stmt = select([df2.c.name, df3.c.data]).\
                     select_from(df2.join(df3, df2.c.name == df3.c.name)).\
                     where(df2.c.name == 'ed')
+        curs = self._exec_stmt(stmt)
+        eq_(
+            curs.fetchall(),
+            [('ed', 'ed1'), ('ed', 'ed2'), ('ed', 'ed3')]
+        )
+
+    def test_explicit_simple_join_aliased(self):
+        tables = self._table_fixture()
+        df2, df3 = tables['df2'], tables['df3']
+
+        s1 = select([(df2.c.name + "hi").label('name')]).alias()
+        s2 = select([(df3.c.name + "hi").label('name')]).\
+                where(or_(
+                            df3.c.data == 'ed2',
+                            df3.c.data == 'jack1',
+                            df3.c.data == 'jack2'
+                        )).\
+                alias()
+
+        stmt = select([s1.c.name, s2.c.name]).\
+            select_from(s1.join(s2, s1.c.name == s2.c.name))
+
+
+        curs = self._exec_stmt(stmt)
+        eq_(
+            curs.fetchall(),
+            [('edhi', 'edhi'), ('jackhi', 'jackhi'), ('jackhi', 'jackhi')]
+        )
+
+    def test_explicit_compound_join(self):
+        tables = self._table_fixture()
+        df2, df3 = tables['df2'], tables['df3']
+
+        stmt = select([df2.c.name, df3.c.data]).\
+                    select_from(df2.join(df3,
+                            and_(df2.c.name == df3.c.name,
+                                    df2.c.name == df3.c.name)
+                        )).\
+                    where(df2.c.name == 'ed')
+        curs = self._exec_stmt(stmt)
+        eq_(
+            curs.fetchall(),
+            [('ed', 'ed1'), ('ed', 'ed2'), ('ed', 'ed3')]
+        )
+
+    def test_explicit_complex_join(self):
+        tables = self._table_fixture()
+        df2, df3 = tables['df2'], tables['df3']
+
+        stmt = select([df2.c.name, df3.c.data]).\
+                    select_from(df2.join(df3,
+                            and_(df2.c.name == df3.c.name,
+                                    df2.c.name == 'ed'))
+                        )
         curs = self._exec_stmt(stmt)
         eq_(
             curs.fetchall(),
