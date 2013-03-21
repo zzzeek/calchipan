@@ -135,6 +135,10 @@ class PandasCompiler(compiler.SQLCompiler):
     def bindparam_string(self, name, **kw):
         return BindParamAdapter(name)
 
+    def order_by_clause(self, select, **kw):
+        order_by = select._order_by_clause._compiler_dispatch(self, **kw)
+        return order_by
+
     def visit_select(self, select, asfrom=False, parens=True,
                             iswrapper=False, fromhints=None,
                             compound_index=0,
@@ -198,6 +202,33 @@ class PandasCompiler(compiler.SQLCompiler):
         self.stack.pop(-1)
 
         return sel
+
+    def visit_compound_select(self, cs, asfrom=False,
+                            parens=True, compound_index=0, **kwargs):
+        entry = self.stack and self.stack[-1] or {}
+        self.stack.append({'from': entry.get('from', None),
+                    'iswrapper': not entry})
+
+        compound = CompoundAdapter()
+        compound.keyword = cs.keyword
+
+        for i, stmt in enumerate(cs.selects):
+            compound.selects.append(
+                stmt._compiler_dispatch(self,
+                                            asfrom=asfrom, parens=False,
+                                            compound_index=i, **kwargs)
+
+            )
+
+        compound.group_by = cs._group_by_clause._compiler_dispatch(
+                                self, asfrom=asfrom, **kwargs)
+        compound.order_by = self.order_by_clause(cs, **kwargs)
+        compound.limit = cs._limit
+        compound.offset = cs._offset
+
+        self.stack.pop(-1)
+
+        return compound
 
 class PandasDialect(default.DefaultDialect):
     statement_compiler = PandasCompiler
@@ -410,14 +441,17 @@ class SelectAdapter(FromAdapter):
         for ind in trace.df_index(p_df):
             row = trace.df_ix_getitem(p_df, slice(ind, ind))
             df = DerivedAdapter(row)
-            thing = self(trace, namespace, params, correlate=df)
+            thing = self._evaluate(trace, namespace, params, correlate=df)
+
+            if len(thing) > 1:
+                raise Exception("Subquery returned more than one row")
 
             # return as a simple list of scalar values.
             # the None is for those rows which we had no value
             things.append(thing[0] if thing else None)
         return things
 
-    def __call__(self, trace, namespace, params, correlate=None):
+    def _evaluate(self, trace, namespace, params, correlate=None):
         product = self.dataframes[0]
         for df in self.dataframes[1:]:
             product = _cartesian(trace, product, df, namespace, params)
@@ -435,6 +469,11 @@ class SelectAdapter(FromAdapter):
                             trace,
                             product, namespace, params)
             return trace.reset_index(col, drop=True)
+        return product
+
+    def __call__(self, trace, namespace, params, correlate=None):
+        product = self._evaluate(trace, namespace, params, correlate)
+
         nu = unique_name()
         return trace.df_from_items(
                     [
@@ -445,6 +484,40 @@ class SelectAdapter(FromAdapter):
                         )
                         for c in self.columns
                     ])
+
+class CompoundAdapter(FromAdapter):
+    keyword = None
+    order_by = None
+    group_by = None
+    limit = None
+    offset = None
+
+    @util.memoized_property
+    def selects(self):
+        return []
+
+    def resolve_dataframe(self, trace, namespace, params, names=True):
+        return self(trace, namespace, params)
+
+    def __call__(self, trace, namespace, params, **kw):
+        assert self.keyword is sql.CompoundSelect.UNION_ALL
+
+        evaluated = [
+            sel(trace, namespace, params, **kw)
+            for sel in self.selects
+        ]
+
+        for ev in evaluated[1:]:
+            trace.rename(ev, columns=dict(
+                    (old, new) for old, new in
+                    zip(ev.keys(), evaluated[0].keys())
+                ),
+                inplace=True)
+
+        df = trace.concat(evaluated)
+        return df
+
+
 
 import collections
 def unique_name():
