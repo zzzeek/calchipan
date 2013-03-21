@@ -99,6 +99,15 @@ class JoinResolver(FromResolver):
         df1 = left = self.left.resolve_dataframe(api, namespace, params)
         df2 = self.right.resolve_dataframe(api, namespace, params)
 
+        straight_binaries, remainder = self._produce_join_expressions(df1, df2)
+
+        df1 = self._merge_straight_binaries(api, df1, df2, straight_binaries)
+
+        df1 = self._merge_remainder(api, left, df1, df2,
+                            namespace, params, straight_binaries, remainder)
+        return df1.where(pd.notnull(df1), None)
+
+    def _produce_join_expressions(self, df1, df2):
         straight_binaries = []
         remainder = []
         if isinstance(self.onclause, ClauseListResolver) and \
@@ -130,13 +139,18 @@ class JoinResolver(FromResolver):
                     continue
 
             remainder.append(comp)
+        return straight_binaries, remainder
 
+    def _merge_straight_binaries(self, api, df1, df2, straight_binaries):
         if straight_binaries:
             # use merge() for straight binaries.
             left_on, right_on = zip(*straight_binaries)
             df1 = api.merge(df1, df2, left_on=left_on, right_on=right_on,
                             how='left' if self.isouter else 'inner')
+        return df1
 
+    def _merge_remainder(self, api, left, df1, df2,
+                            namespace, params, straight_binaries, remainder):
         # for joins that aren't straight "col == col",
         # we use the ON criterion directly.
         # if we don't already have a dataframe with the full
@@ -154,19 +168,21 @@ class JoinResolver(FromResolver):
                         api, DerivedResolver(df1), namespace, params
                     )
 
-            # for outerjoin without merge(), we're getting the inverse,
-            # dropping off the right columns, then concatenating to the
-            # inner join, then dropping dupes based on left table columns.
-            # Suggestions welcome here too!
             if self.isouter:
-                q = api.df_getitem(df1, ~expr)
-                inverse = q[left.keys()]
+                raise NotImplementedError(
+                    "outer join for non-simple ON clause not supported yet...")
+                # not really sure what to do here, need to get
+                # the inner join, plus the rows in the inverse, and dedupe
+                # the inverse rows somehow, sort of, not really sure.
+                #q = api.df_getitem(df1, ~expr)
+                #inverse = q[left.keys()]
 
             df1 = api.df_getitem(df1, expr)
 
-            if self.isouter:
-                df1 = api.concat([df1, inverse]).drop_duplicates(cols=left)
-        return df1.where(pd.notnull(df1), None)
+            #if self.isouter:
+            #    df1 = api.concat([df1, inverse]) #.drop_duplicates(cols=left)
+        return df1
+
 
 class AliasResolver(FromResolver):
     def __init__(self, table, aliasname):

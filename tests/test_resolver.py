@@ -122,7 +122,7 @@ class RoundTripTest(TestCase):
         emp, dep, conn = self._emp_d_fixture()
         r = self._exec_stmt(conn,
                     select([dep.c.name, emp.c.name]).select_from(
-                        dep.outerjoin(emp, emp.c.dep_id > dep.c.dep_id)
+                        dep.outerjoin(emp, emp.c.dep_id >= dep.c.dep_id)
                     )
                 )
         eq_(r.fetchall(),
