@@ -34,8 +34,9 @@ class RoundTripTest(TestCase):
                     Column('dep_id', Integer, primary_key=True),
                     Column('name', String),
                     )
-        conn = dbapi.connect({"employee": emp_df, "department": dept_df},
-                        dbapi.Trace(log=True))
+        conn = dbapi.connect(
+                        {"employee": emp_df, "department": dept_df},
+                        trace=True)
         return emp, dep, conn
 
     def test_select_single_table(self):
@@ -72,7 +73,7 @@ class RoundTripTest(TestCase):
             (2, 'wendy', 'Wendy Wharton', 1, 1, 'Engineering'),
             (3, 'jack', 'Jack Smith', 2, 2, 'Accounting')
         ])
-        self._assert_cartesian(conn.trace)
+        self._assert_cartesian(conn)
 
     def test_select_column_expression(self):
         emp, dep, conn = self._emp_d_fixture()
@@ -101,7 +102,7 @@ class RoundTripTest(TestCase):
             (2, 'wendy', 'Wendy Wharton', 1, 1, 'Engineering'),
             (3, 'jack', 'Jack Smith', 2, 2, 'Accounting')
         ])
-        self._assert_no_cartesian(conn.trace)
+        self._assert_no_cartesian(conn)
 
     def test_select_explicit_outerjoin_simple_crit(self):
         emp, dep, conn = self._emp_d_fixture()
@@ -115,7 +116,7 @@ class RoundTripTest(TestCase):
             ('Engineering', 'ed'), ('Engineering', 'wendy'),
             ('Accounting', 'jack'), ('Sales', None)
         ])
-        self._assert_no_cartesian(conn.trace)
+        self._assert_no_cartesian(conn)
 
     def test_select_explicit_outerjoin_complex_crit(self):
         emp, dep, conn = self._emp_d_fixture()
@@ -128,7 +129,7 @@ class RoundTripTest(TestCase):
             [
             ('Engineering', 'jack'), ('Accounting', None), ('Sales', None)
         ])
-        self._assert_cartesian(conn.trace)
+        self._assert_cartesian(conn)
 
     def test_select_explicit_join_simple_reverse_crit(self):
         emp, dep, conn = self._emp_d_fixture()
@@ -143,7 +144,7 @@ class RoundTripTest(TestCase):
             (3, 'jack', 'Jack Smith', 2, 2, 'Accounting')
         ])
         # no cartesian product
-        self._assert_no_cartesian(conn.trace)
+        self._assert_no_cartesian(conn)
 
     def test_explicit_simple_join_aliased(self):
         emp, dep, conn = self._emp_d_fixture()
@@ -164,7 +165,7 @@ class RoundTripTest(TestCase):
             [(1, 'name: Engineering', 1, 'name: wendy'),
             (2, 'name: Accounting', 2, 'name: jack')]
         )
-        self._assert_no_cartesian(conn.trace)
+        self._assert_no_cartesian(conn)
 
     def test_select_explicit_join_complex_crit(self):
         emp, dep, conn = self._emp_d_fixture()
@@ -179,7 +180,7 @@ class RoundTripTest(TestCase):
             (2, 'wendy', 'Wendy Wharton', 1, 3, 'Sales'),
             (3, 'jack', 'Jack Smith', 2, 3, 'Sales')
         ])
-        self._assert_cartesian(conn.trace)
+        self._assert_cartesian(conn)
 
     def test_select_explicit_join_compound_crit(self):
         emp, dep, conn = self._emp_d_fixture()
@@ -194,7 +195,7 @@ class RoundTripTest(TestCase):
             (2, 'wendy', 'Wendy Wharton', 1, 1, 'Engineering'),
             (3, 'jack', 'Jack Smith', 2, 2, 'Accounting')
         ])
-        self._assert_no_cartesian(conn.trace)
+        self._assert_no_cartesian(conn)
 
 
     def test_correlated_subquery_column(self):
@@ -257,14 +258,14 @@ class RoundTripTest(TestCase):
         eq_(r.fetchall(), [('ed', 1), ('wendy', 1)])
 
 
-    def _assert_cartesian(self, trace):
-        assert self._has_cartesian(trace)
+    def _assert_cartesian(self, conn):
+        assert self._has_cartesian(conn)
 
-    def _assert_no_cartesian(self, trace):
-        assert not self._has_cartesian(trace)
+    def _assert_no_cartesian(self, conn):
+        assert not self._has_cartesian(conn)
 
-    def _has_cartesian(self, trace):
-        for elem in trace._buf:
+    def _has_cartesian(self, conn):
+        for elem in conn.trace:
             if elem[0] == "merge" and \
                     len(elem[3]) == len(elem[1]) * len(elem[2]):
                 return True
@@ -386,10 +387,24 @@ class RoundTripTest(TestCase):
             [(2, False), (1, True)]
         )
 
-    def _exec_stmt(self, conn, stmt, trace=None):
+    def test_group_by_multiple(self):
+        emp, dep, conn = self._emp_d_fixture()
+
+        stmt = select([dep.c.dep_id, dep.c.name, func.count(emp.c.emp_id)]).\
+                        select_from(
+                            dep.join(emp, dep.c.dep_id == emp.c.dep_id)
+                        ).\
+                        group_by(dep.c.dep_id, dep.c.name)
+        r = self._exec_stmt(conn, stmt)
+        eq_(
+            r.fetchall(),
+            [(1, 'Engineering', 2), (2, 'Accounting', 1)]
+        )
+
+    def _exec_stmt(self, conn, stmt):
         d = base.PandasDialect()
         comp = stmt.compile(dialect=d)
         curs = conn.cursor()
-        curs.execute(comp._panda_fn, comp.params, trace=trace)
+        curs.execute(comp._panda_fn, comp.params)
         return curs
 

@@ -2,7 +2,7 @@
 import pandas as pd
 import numpy as np
 
-def connect(namespace=None, trace=None):
+def connect(namespace=None, trace=False):
     """Create a 'connection'.
 
     :param namespace: optional dictionary of names to pandas
@@ -12,14 +12,18 @@ def connect(namespace=None, trace=None):
     return Connection(namespace, trace)
 
 class Connection(object):
-    def __init__(self, namespace=None, trace=None):
+    def __init__(self, namespace=None, trace=False):
         self._namespace = {}
-        if trace is None:
-            self.trace = Trace()
-        else:
-            self.trace = trace
+        self.api = PandasAPI(log=trace)
         if namespace:
             self._namespace.update(namespace)
+
+    @property
+    def trace(self):
+        return self.api._buf
+
+    def trace_as_string(self):
+        return _print_trace(self.trace)
 
     def add_namespace(self, name, dataframe):
         self._namespace[name] = dataframe
@@ -36,12 +40,23 @@ class Connection(object):
 class Cursor(object):
     def __init__(self, connection):
         self.namespace = connection._namespace
-        self.trace = connection.trace
+        self.api = connection.api
 
-    def execute(self, stmt, params=None, trace=None):
-        if trace is None:
-            trace = self.trace
-        result = stmt(trace, self.namespace, params)
+    def execute(self, stmt, params=None):
+        """Execute a 'statement'.
+
+        The 'statement' here is a callable of the form::
+
+                def execute(api, namespace, params):
+                    ''
+
+        Where ``api`` is an instance of :class:`.PandasAPI`,
+        ``namespace`` is the namespace dictionary associated with the
+        :class:`.Connection`, and ``params`` is the params dict passed
+        here.  The callable should return a Pandas DataFrame object.
+
+        """
+        result = stmt(self.api, self.namespace, params)
         self._result = [tuple(rec) for rec in result.to_records(index=False)]
         # type would be: result[k].dtype
         # but this isn't really compatible with DBAPI's
@@ -71,7 +86,9 @@ class Cursor(object):
     def close(self):
         pass
 
-class Trace(object):
+class PandasAPI(object):
+    """Facade for Pandas methods; allows tracing of all function calls."""
+
     def __init__(self, log=False):
         self.log = log
         if log:
@@ -90,6 +107,8 @@ class Trace(object):
         return df
 
     def rename(self, df, columns=None, inplace=False):
+        if self.log:
+            self._buf.append(("rename", df, columns))
         return df.rename(columns=columns, inplace=inplace)
 
     def np_ones(self, length):
@@ -128,35 +147,39 @@ class Trace(object):
             self._buf.append(("from_items", arg))
         return pd.DataFrame.from_items(arg)
 
-    def _df_str(self, df):
+    def to_string(self):
+        return _print_trace(self)
+
+def _print_trace(trace):
+    def _df_str(df):
         return "%dx%d (%s)" % (len(df.keys()), len(df), ", ".join(df.keys()))
 
-    def _merge_str(self, rec):
+    def _merge_str(rec):
         return "Merge %s to %s to produce %s; %s" % (
-                            self._df_str(rec[1]),
-                            self._df_str(rec[2]),
-                            self._df_str(rec[3]),
+                            _df_str(rec[1]),
+                            _df_str(rec[2]),
+                            _df_str(rec[3]),
                             rec[4],
                         )
 
-    def _ones_str(self, rec):
+    def _ones_str(rec):
         return "Array of %d ones" % rec[1]
 
-    def _dataframe_str(self, rec):
-        return "Create dataframe %s" % (self._df_str(rec[1]))
+    def _dataframe_str(rec):
+        return "Create dataframe %s" % (_df_str(rec[1]))
 
     _trace_str = {
         "merge": _merge_str,
         "ones": _ones_str,
         "dataframe": _dataframe_str
     }
-    def to_string(self):
-        lines = []
-        for elem in self._buf:
-            try:
-                fn = self._trace_str[elem[0]]
-            except KeyError:
-                pass
-            else:
-                lines.append(fn(self, elem))
-        return "\n".join(lines)
+
+    lines = []
+    for elem in trace:
+        try:
+            fn = _trace_str[elem[0]]
+        except KeyError:
+            pass
+        else:
+            lines.append(fn(elem))
+    return "\n".join(lines)
