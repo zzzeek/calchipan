@@ -4,7 +4,7 @@ from sqlalchemy.sql import expression as sql, operators
 from sqlalchemy import util
 from sqlalchemy.engine import default
 import functools
-
+import pandas as pd
 
 class PandasCompiler(compiler.SQLCompiler):
     def __init__(self, *arg, **kw):
@@ -40,6 +40,23 @@ class PandasCompiler(compiler.SQLCompiler):
                 tablename = self._truncated_identifier("alias", tablename)
 
         return ColumnAdapter(name, tablename)
+
+    def visit_function(self, func, add_to_result_map=None, **kwargs):
+        # this is only re-implemented so that we can raise
+        # on functions not implemented right here
+
+        if add_to_result_map is not None:
+            add_to_result_map(
+                func.name, func.name, (), func.type
+            )
+
+        disp = getattr(self, "visit_%s_func" % func.name.lower(), None)
+        if disp:
+            return disp(func, **kwargs)
+        else:
+            raise exc.CompileError(
+                    "Pandas dialect has no '%s()' function implemented" %
+                    func.name.lower())
 
     def visit_label(self, label,
                             add_to_result_map=None,
@@ -77,6 +94,22 @@ class PandasCompiler(compiler.SQLCompiler):
     def visit_concat_op_binary(self, binary, operator, **kw):
         kw['override_op'] = operators.add
         return self.visit_binary(binary, **kw)
+
+    def _aggregate_on(self, func, fn, **kw):
+        return FunctionAdapter(
+                    fn,
+                    func.clause_expr._compiler_dispatch(self, **kw),
+                    True
+                )
+
+    def visit_count_func(self, func, **kw):
+        return self._aggregate_on(func, len, **kw)
+
+    def visit_max_func(self, func, **kw):
+        return self._aggregate_on(func, max, **kw)
+
+    def visit_min_func(self, func, **kw):
+        return self._aggregate_on(func, min, **kw)
 
     def visit_clauselist(self, clauselist, **kwargs):
         return ClauseListAdapter(
@@ -199,6 +232,11 @@ class PandasCompiler(compiler.SQLCompiler):
             t = select._whereclause._compiler_dispatch(self, **kwargs)
             sel.whereclause = t
 
+        if select._group_by_clause.clauses:
+            group_by = select._group_by_clause._compiler_dispatch(
+                                        self, **kwargs)
+            sel.group_by = group_by
+
         self.stack.pop(-1)
 
         return sel
@@ -239,6 +277,23 @@ class Adapter(object):
 class ColumnElementAdapter(Adapter):
     def resolve_expression(self, trace, product, namespace, params):
         raise NotImplementedError()
+
+class FunctionAdapter(ColumnElementAdapter):
+    def __init__(self, fn, expr, aggregate):
+        self.fn = fn
+        self.expr = expr
+        self.aggregate = aggregate
+
+    def resolve_expression(self, trace, product, namespace, params):
+        q = self.fn(self.expr.resolve_expression(
+                    trace, product, namespace, params))
+        if self.aggregate:
+            q = Aggregate(q)
+        return q
+
+class Aggregate(object):
+    def __init__(self, value):
+        self.value = value
 
 class ColumnAdapter(ColumnElementAdapter):
     def __init__(self, name, tablename):
@@ -306,8 +361,8 @@ class JoinAdapter(FromAdapter):
         self.isouter = isouter
 
     def resolve_dataframe(self, trace, namespace, params, names=True):
-        df1, df2 = self.left.resolve_dataframe(trace, namespace, params), \
-                        self.right.resolve_dataframe(trace, namespace, params)
+        df1 = left = self.left.resolve_dataframe(trace, namespace, params)
+        df2 = right = self.right.resolve_dataframe(trace, namespace, params)
 
         straight_binaries = []
         remainder = []
@@ -342,11 +397,14 @@ class JoinAdapter(FromAdapter):
             remainder.append(comp)
 
         if straight_binaries:
+            # for straight binaries, we use merge().   This is
+            # most joins.
             left_on, right_on = zip(*straight_binaries)
-            df1 = trace.merge(df1, df2, left_on=left_on, right_on=right_on)
+            df1 = trace.merge(df1, df2, left_on=left_on, right_on=right_on,
+                            how='left' if self.isouter else 'inner')
 
-        # for everything else, use cartesian product
-        # plus expressions
+        # for joins that aren't straight, use a cartesian product
+        # and then an expression.
         if remainder:
             if len(remainder) > 1:
                 remainder = ClauseListAdapter(remainder, operators.and_)
@@ -358,11 +416,22 @@ class JoinAdapter(FromAdapter):
             # "things are more efficient if we happened to join on the index"?
             if not straight_binaries:
                 df1 = _cartesian_dataframe(trace, df1, df2)
-            df1 = trace.df_getitem(df1, remainder.resolve_expression(trace,
-                    DerivedAdapter(df1), namespace, params))
-        return df1
+            expr = remainder.resolve_expression(
+                        trace, DerivedAdapter(df1), namespace, params
+                    )
 
+            # for outerjoin without merge(), we're getting the inverse,
+            # dropping off the right columns, then concatenating to the
+            # inner join, then dropping dupes based on left table columns
+            if self.isouter:
+                q = trace.df_getitem(df1, ~expr)
+                inverse = q[left.keys()]
 
+            df1 = trace.df_getitem(df1, expr)
+
+            if self.isouter:
+                df1 = trace.concat([df1, inverse]).drop_duplicates(cols=left)
+        return df1.where(pd.notnull(df1), None)
 
 class AliasAdapter(FromAdapter):
     def __init__(self, table, aliasname):
@@ -416,6 +485,7 @@ class BindParamAdapter(ColumnElementAdapter):
 
 class SelectAdapter(FromAdapter):
     whereclause = None
+    group_by = None
 
     @util.memoized_property
     def dataframes(self):
@@ -474,16 +544,51 @@ class SelectAdapter(FromAdapter):
     def __call__(self, trace, namespace, params, correlate=None):
         product = self._evaluate(trace, namespace, params, correlate)
 
+        if self.group_by is not None:
+            df = product.resolve_dataframe(trace, namespace, params)
+            gp = self.group_by.resolve_expression(
+                            trace, product, namespace, params)
+            groups = [DerivedAdapter(gdf[1]) for gdf in df.groupby(gp)]
+        else:
+            groups = [product]
+
+
+        def process_aggregates(gprod):
+            """detect aggregate funcitons in column clauses and
+            flatten results if present
+            """
+            cols = [c.resolve_expression(trace, gprod, namespace,
+                                                    params)
+                    for c in self.columns]
+            for c in cols:
+                if isinstance(c, Aggregate):
+                    break
+            else:
+                return cols
+
+            return [
+                list(c)[0]
+                    if not isinstance(c, Aggregate)
+                    else [c.value]
+                for c in cols
+            ]
+
         nu = unique_name()
-        return trace.df_from_items(
+        names = [nu(c.name) for c in self.columns]
+
+        # select columns and recombine groups together
+        group_results = [
+            trace.df_from_items(
                     [
                         (
-                            nu(c.name),
-                            c.resolve_expression(trace, product, namespace,
-                                                    params)
+                            name,
+                            expr
                         )
-                        for c in self.columns
+                        for name, expr in zip(names, process_aggregates(gprod))
                     ])
+            for gprod in groups
+        ]
+        return trace.concat(group_results)
 
 class CompoundAdapter(FromAdapter):
     keyword = None

@@ -83,8 +83,8 @@ class Trace(object):
             self._buf.append(("merge", df1, df2, df, kw))
         return df
 
-    def concat(self, dfs):
-        df = pd.concat(dfs)
+    def concat(self, dfs, **kw):
+        df = pd.concat(dfs, **kw)
         if self.log:
             self._buf.append(("concat", dfs, df))
         return df

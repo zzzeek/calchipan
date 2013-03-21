@@ -3,7 +3,8 @@ import pandas as pd
 from calhipan import dbapi, base
 from . import eq_, assert_raises_message
 from sqlalchemy import Table, Column, Integer, union_all, \
-        String, MetaData, select, and_, or_, ForeignKey
+        String, MetaData, select, and_, or_, ForeignKey, \
+        func, exc
 
 class RoundTripTest(TestCase):
 
@@ -101,6 +102,33 @@ class RoundTripTest(TestCase):
             (3, 'jack', 'Jack Smith', 2, 2, 'Accounting')
         ])
         self._assert_no_cartesian(conn.trace)
+
+    def test_select_explicit_outerjoin_simple_crit(self):
+        emp, dep, conn = self._emp_d_fixture()
+        r = self._exec_stmt(conn,
+                    select([dep.c.name, emp.c.name]).select_from(
+                        dep.outerjoin(emp, emp.c.dep_id == dep.c.dep_id)
+                    )
+                )
+        eq_(r.fetchall(),
+            [
+            ('Engineering', 'ed'), ('Engineering', 'wendy'),
+            ('Accounting', 'jack'), ('Sales', None)
+        ])
+        self._assert_no_cartesian(conn.trace)
+
+    def test_select_explicit_outerjoin_complex_crit(self):
+        emp, dep, conn = self._emp_d_fixture()
+        r = self._exec_stmt(conn,
+                    select([dep.c.name, emp.c.name]).select_from(
+                        dep.outerjoin(emp, emp.c.dep_id > dep.c.dep_id)
+                    )
+                )
+        eq_(r.fetchall(),
+            [
+            ('Engineering', 'jack'), ('Accounting', None), ('Sales', None)
+        ])
+        self._assert_cartesian(conn.trace)
 
     def test_select_explicit_join_simple_reverse_crit(self):
         emp, dep, conn = self._emp_d_fixture()
@@ -305,6 +333,58 @@ class RoundTripTest(TestCase):
         eq_(r.fetchall(), [
             ('jack', 'Jack Smith'), (1, 'Engineering'),
             (2, 'Accounting'), (3, 'Sales')])
+
+
+    def test_count_function(self):
+        emp, dep, conn = self._emp_d_fixture()
+        stmt = select([func.count(emp.c.name)])
+        r = self._exec_stmt(conn, stmt)
+        eq_(
+            r.fetchall(),
+            [(3, )]
+        )
+
+    def test_unimpl_function(self):
+        emp, dep, conn = self._emp_d_fixture()
+        stmt = select([func.fake(emp.c.name)])
+        assert_raises_message(
+            exc.CompileError,
+            "Pandas dialect has no 'fake\(\)' function implemented",
+            self._exec_stmt, conn, stmt
+        )
+
+    def test_group_by_max(self):
+        emp, dep, conn = self._emp_d_fixture()
+
+        stmt = select([func.max(emp.c.name), emp.c.dep_id]).\
+                    group_by(emp.c.dep_id)
+        r = self._exec_stmt(conn, stmt)
+        eq_(
+            r.fetchall(),
+            [('wendy', 1), ('jack', 2)]
+        )
+
+    def test_group_by_count(self):
+        emp, dep, conn = self._emp_d_fixture()
+
+        stmt = select([func.count(emp.c.name), emp.c.dep_id]).\
+                    group_by(emp.c.dep_id)
+        r = self._exec_stmt(conn, stmt)
+        eq_(
+            r.fetchall(),
+            [(2, 1), (1, 2)]
+        )
+
+    def test_group_by_expression(self):
+        emp, dep, conn = self._emp_d_fixture()
+
+        stmt = select([func.count(emp.c.name), emp.c.name == 'ed']).\
+                    group_by(emp.c.name == 'ed')
+        r = self._exec_stmt(conn, stmt)
+        eq_(
+            r.fetchall(),
+            [(2, False), (1, True)]
+        )
 
     def _exec_stmt(self, conn, stmt, trace=None):
         d = base.PandasDialect()
