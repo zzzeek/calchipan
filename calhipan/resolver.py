@@ -305,8 +305,6 @@ class BaseSelectResolver(FromResolver):
         nu = unique_name()
         names = [nu(c.name) for c in self.columns]
 
-        #results = api.concat([api.df_from_items([process_aggregates(gprod)]) for gprod in groups])
-
         group_results = [
             api.df_from_items(
                     [
@@ -314,7 +312,8 @@ class BaseSelectResolver(FromResolver):
                             c.df_index,
                             expr
                         )
-                        for c, expr in zip(self.columns, process_aggregates(gprod))
+                        for c, expr
+                            in zip(self.columns, process_aggregates(gprod))
                     ])
             for gprod in groups
         ]
@@ -411,6 +410,10 @@ class CompoundResolver(BaseSelectResolver):
     def selects(self):
         return []
 
+    @property
+    def columns(self):
+        return self.selects[0].columns
+
     def resolve_dataframe(self, api, namespace, params, names=True):
         return self(api, namespace, params)
 
@@ -421,8 +424,6 @@ class CompoundResolver(BaseSelectResolver):
             sel(api, namespace, params, **kw)
             for sel in self.selects
         ]
-
-        self.columns = self.selects[0].columns
 
         for ev in evaluated:
             api.rename(ev, columns=dict(
