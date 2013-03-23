@@ -118,19 +118,6 @@ class RoundTripTest(TestCase):
         ])
         self._assert_no_cartesian(conn)
 
-    def test_select_explicit_outerjoin_complex_crit(self):
-        emp, dep, conn = self._emp_d_fixture()
-        r = self._exec_stmt(conn,
-                    select([dep.c.name, emp.c.name]).select_from(
-                        dep.outerjoin(emp, emp.c.dep_id >= dep.c.dep_id)
-                    )
-                )
-        eq_(r.fetchall(),
-            [
-            ('Engineering', 'jack'), ('Accounting', None), ('Sales', None)
-        ])
-        self._assert_cartesian(conn)
-
     def test_select_explicit_join_simple_reverse_crit(self):
         emp, dep, conn = self._emp_d_fixture()
         r = self._exec_stmt(conn,
@@ -167,7 +154,7 @@ class RoundTripTest(TestCase):
         )
         self._assert_no_cartesian(conn)
 
-    def test_select_explicit_join_complex_crit(self):
+    def test_select_explicit_join_complex_crit_1(self):
         emp, dep, conn = self._emp_d_fixture()
         r = self._exec_stmt(conn,
                     select([emp, dep]).\
@@ -181,6 +168,36 @@ class RoundTripTest(TestCase):
             (3, 'jack', 'Jack Smith', 2, 3, 'Sales')
         ])
         self._assert_cartesian(conn)
+
+    def test_select_explicit_join_complex_crit_2(self):
+        emp, dep, conn = self._emp_d_fixture()
+        r = self._exec_stmt(conn,
+                    select([dep.c.name, emp.c.name]).select_from(
+                        dep.join(emp, emp.c.dep_id >= dep.c.dep_id)
+                    )
+                )
+        eq_(r.fetchall(),
+            [
+            ('Engineering', 'ed'), ('Engineering', 'wendy'),
+            ('Engineering', 'jack'), ('Accounting', 'jack')
+        ])
+        self._assert_cartesian(conn)
+
+    def test_select_explicit_outerjoin_complex_crit(self):
+        emp, dep, conn = self._emp_d_fixture()
+        r = self._exec_stmt(conn,
+                    select([dep.c.name, emp.c.name]).select_from(
+                        dep.outerjoin(emp, emp.c.dep_id >= dep.c.dep_id)
+                    )
+                )
+        eq_(r.fetchall(),
+            [
+            ('Engineering', 'ed'), ('Engineering', 'wendy'),
+            ('Engineering', 'jack'), ('Accounting', 'jack'),
+            ('Sales', None)
+        ])
+        self._assert_cartesian(conn)
+
 
     def test_select_explicit_join_compound_crit(self):
         emp, dep, conn = self._emp_d_fixture()

@@ -99,6 +99,9 @@ class JoinResolver(FromResolver):
         df1 = left = self.left.resolve_dataframe(api, namespace, params)
         df2 = self.right.resolve_dataframe(api, namespace, params)
 
+        if self.isouter:
+            left['_cp_left_index'] = left.index
+
         straight_binaries, remainder = self._produce_join_expressions(df1, df2)
 
         df1 = self._merge_straight_binaries(api, df1, df2, straight_binaries)
@@ -154,8 +157,9 @@ class JoinResolver(FromResolver):
         # for joins that aren't straight "col == col",
         # we use the ON criterion directly.
         # if we don't already have a dataframe with the full
-        # left + right cols, we use a cartesian proudct first;
-        # not sure how else to do this, suggestions welcome.
+        # left + right cols, we use a cartesian product first.
+        # ideally, we'd limit the cartesian on only those columns we
+        # need.
         if remainder:
             if len(remainder) > 1:
                 remainder = ClauseListResolver(remainder, operators.and_)
@@ -168,19 +172,16 @@ class JoinResolver(FromResolver):
                         api, DerivedResolver(df1), namespace, params
                     )
 
+            joined = api.df_getitem(df1, expr)
+
             if self.isouter:
-                raise NotImplementedError(
-                    "outer join for non-simple ON clause not supported yet...")
-                # not really sure what to do here, need to get
-                # the inner join, plus the rows in the inverse, and dedupe
-                # the inverse rows somehow, sort of, not really sure.
-                #q = api.df_getitem(df1, ~expr)
-                #inverse = q[left.keys()]
-
-            df1 = api.df_getitem(df1, expr)
-
-            #if self.isouter:
-            #    df1 = api.concat([df1, inverse]) #.drop_duplicates(cols=left)
+                # for outer join, grab remaining rows from "left"
+                remaining_left_ids = set(df1['_cp_left_index']).\
+                                        difference(joined['_cp_left_index'])
+                remaining = left.ix[remaining_left_ids]
+                df1 = pd.concat([joined, remaining]).reset_index()
+            else:
+                df1 = joined
         return df1
 
 
