@@ -1,6 +1,7 @@
 """A DBAPI (pep-249) emulation layer."""
 import pandas as pd
 import numpy as np
+from . import compat
 
 def connect(namespace=None, trace=False):
     """Create a 'connection'.
@@ -10,6 +11,11 @@ def connect(namespace=None, trace=False):
 
     """
     return Connection(namespace, trace)
+
+paramstyle = 'named'
+
+class Error(Exception):
+    pass
 
 class Connection(object):
     def __init__(self, namespace=None, trace=False):
@@ -37,6 +43,9 @@ class Connection(object):
     def rollback(self):
         pass
 
+    def close(self):
+        pass
+
 class Cursor(object):
     def __init__(self, connection):
         self.namespace = connection._namespace
@@ -56,8 +65,11 @@ class Cursor(object):
         here.  The callable should return a Pandas DataFrame object.
 
         """
+        if isinstance(stmt, compat.basestring):
+            raise Error("Only Pandas callable functions accepted for execute()")
         result = stmt(self.api, self.namespace, params)
-        self._result = [tuple(rec) for rec in result.to_records(index=False)]
+
+        self._result = [t[1:] for t in result.itertuples()]
         # type would be: result[k].dtype
         # but this isn't really compatible with DBAPI's
         # constant model; sqlite3 just returns None
@@ -70,6 +82,8 @@ class Cursor(object):
         raise NotImplementedError()
 
     def fetchone(self):
+        if not self._result:
+            return None
         return self._result.pop(0)
 
     def fetchmany(self, size=None):

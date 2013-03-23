@@ -1,10 +1,9 @@
-from unittest import TestCase
+from sqlalchemy.testing.fixtures import TestBase
 import pandas as pd
 from calhipan import dbapi
-from . import eq_
+from . import eq_, assert_raises_message
 
-
-class DBAPITest(TestCase):
+class DBAPITest(TestBase):
     def _simple_fixture(self):
         df1 = pd.DataFrame([
                 {
@@ -20,6 +19,14 @@ class DBAPITest(TestCase):
                 ])
         return {"df1": df1, "df2": df2}
 
+    def test_no_strings(self):
+        conn = dbapi.connect(self._simple_fixture())
+        curs = conn.cursor()
+        assert_raises_message(
+            dbapi.Error,
+            "Only Pandas callable functions accepted for execute()",
+            curs.execute, "select * from table"
+        )
     def test_simple_statement(self):
         def stmt(trace, namespace, params):
             return namespace["df1"][["col1", "col2", "col3"]]

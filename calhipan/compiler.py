@@ -10,7 +10,8 @@ from sqlalchemy import exc
 from sqlalchemy.sql import expression as sql, operators
 from sqlalchemy import util
 from . import resolver
-
+import datetime
+import pandas as pd
 
 class PandasCompiler(compiler.SQLCompiler):
     def __init__(self, *arg, **kw):
@@ -59,6 +60,12 @@ class PandasCompiler(compiler.SQLCompiler):
         disp = getattr(self, "visit_%s_func" % func.name.lower(), None)
         if disp:
             return disp(func, **kwargs)
+        elif hasattr(func, "pandas_fn"):
+            if getattr(func, "pandas_aggregate", False):
+                return self._aggregate_on(func, func.pandas_fn, **kwargs)
+            else:
+                return self._scalar_fn_on(func, func.pandas_fn, **kwargs)
+
         else:
             raise exc.CompileError(
                     "Pandas dialect has no '%s()' function implemented" %
@@ -107,6 +114,17 @@ class PandasCompiler(compiler.SQLCompiler):
                     func.clause_expr._compiler_dispatch(self, **kw),
                     True
                 )
+
+    def _scalar_fn_on(self, func, fn, **kw):
+        return resolver.FunctionResolver(
+                    fn,
+                    func.clause_expr._compiler_dispatch(self, **kw),
+                    False
+                )
+
+    def visit_now_func(self, func, **kw):
+        return self._scalar_fn_on(func,
+                    lambda arg: pd.Series([datetime.datetime.now()]), **kw)
 
     def visit_count_func(self, func, **kw):
         return self._aggregate_on(func, len, **kw)

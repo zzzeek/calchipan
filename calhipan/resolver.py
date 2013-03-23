@@ -166,6 +166,10 @@ class JoinResolver(FromResolver):
             else:
                 remainder = remainder[0]
 
+            # TODO: performance optimization: do the cartesian product
+            # here on a subset of the two dataframes, that only includes
+            # those columns we need in the expression.   Then reindex
+            # back out to the original dataframes.
             if not straight_binaries:
                 df1 = _cartesian_dataframe(api, df1, df2)
             expr = remainder.resolve_expression(
@@ -279,7 +283,10 @@ class SelectResolver(FromResolver):
         return things
 
     def _evaluate(self, api, namespace, params, correlate=None):
-        product = self.dataframes[0]
+        if not self.dataframes:
+            product = DerivedResolver(api.dataframe([{col.df_index: [1]} for col in self.columns]))
+        else:
+            product = self.dataframes[0]
         for df in self.dataframes[1:]:
             product = _cartesian(api, product, df, namespace, params)
         if correlate:
