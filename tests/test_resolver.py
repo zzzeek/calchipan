@@ -248,7 +248,7 @@ class RoundTripTest(TestBase):
                     where(dep.c.dep_id == emp.c.dep_id).as_scalar()
         stmt = select([dep.c.name, subq])
         assert_raises_message(
-            Exception,
+            dbapi.Error,
             "Subquery returned more than one row",
             self._exec_stmt, conn, stmt,
         )

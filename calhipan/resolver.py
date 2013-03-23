@@ -7,6 +7,7 @@ from sqlalchemy import util
 import functools
 import pandas as pd
 import collections
+from . import dbapi
 
 class Resolver(object):
     pass
@@ -370,7 +371,7 @@ class SelectResolver(BaseSelectResolver):
             thing = self._evaluate(api, namespace, params, correlate=df)
 
             if len(thing) > 1:
-                raise Exception("Subquery returned more than one row")
+                raise dbapi.Error("Subquery returned more than one row")
 
             # return as a simple list of scalar values.
             # the None is for those rows which we had no value
