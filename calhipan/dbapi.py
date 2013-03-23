@@ -69,7 +69,7 @@ class Cursor(object):
             raise Error("Only Pandas callable functions accepted for execute()")
         result = stmt(self.api, self.namespace, params)
 
-        self._result = [t[1:] for t in result.itertuples()]
+        self._result = list(result.itertuples(index=False))
         # type would be: result[k].dtype
         # but this isn't really compatible with DBAPI's
         # constant model; sqlite3 just returns None

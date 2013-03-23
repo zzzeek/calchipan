@@ -371,6 +371,75 @@ class RoundTripTest(TestBase):
             self._exec_stmt, conn, stmt
         )
 
+    def test_order_by_single(self):
+        emp, dep, conn = self._emp_d_fixture()
+        stmt = select([emp.c.name]).\
+                    order_by(emp.c.name)
+        r = self._exec_stmt(conn, stmt)
+        eq_(
+            r.fetchall(),
+            [('ed', ), ('jack', ), ('wendy', )]
+        )
+
+    def test_order_by_multiple_asc(self):
+        emp, dep, conn = self._emp_d_fixture()
+        stmt = select([emp.c.name, dep.c.name]).\
+                    select_from(emp.join(dep)).\
+                    order_by(dep.c.name, emp.c.name)
+        r = self._exec_stmt(conn, stmt)
+        eq_(
+            r.fetchall(),
+            [('jack', 'Accounting'),
+                ('ed', 'Engineering'), ('wendy', 'Engineering')]
+        )
+
+    def test_order_by_multiple_mixed_one(self):
+        emp, dep, conn = self._emp_d_fixture()
+        stmt = select([emp.c.name, dep.c.name]).\
+                    select_from(emp.join(dep)).\
+                    order_by(dep.c.name, emp.c.name.desc())
+        r = self._exec_stmt(conn, stmt)
+        eq_(
+            r.fetchall(),
+            [('jack', 'Accounting'),
+                ('wendy', 'Engineering'), ('ed', 'Engineering')]
+        )
+
+    def test_order_by_multiple_mixed_two(self):
+        emp, dep, conn = self._emp_d_fixture()
+        stmt = select([emp.c.name, dep.c.name]).\
+                    select_from(emp.join(dep)).\
+                    order_by(dep.c.name.desc(), emp.c.name)
+        r = self._exec_stmt(conn, stmt)
+        eq_(
+            r.fetchall(),
+            [('ed', 'Engineering'),
+                ('wendy', 'Engineering'), ('jack', 'Accounting'), ]
+        )
+
+    def test_order_by_expression(self):
+        emp, dep, conn = self._emp_d_fixture()
+        stmt = select([emp.c.name, dep.c.name]).\
+                    select_from(emp.join(dep)).\
+                    order_by(dep.c.name + emp.c.name)
+        r = self._exec_stmt(conn, stmt)
+        # ordering on:   Engineeringed, Engineeringwendy, Accountingjack
+        eq_(
+            r.fetchall(),
+            [('jack', 'Accounting'), ('ed', 'Engineering'),
+            ('wendy', 'Engineering')]
+        )
+
+    def test_order_by_single_descending(self):
+        emp, dep, conn = self._emp_d_fixture()
+        stmt = select([emp.c.name]).\
+                    order_by(emp.c.name.desc())
+        r = self._exec_stmt(conn, stmt)
+        eq_(
+            r.fetchall(),
+            [('wendy',), ('jack',), ('ed',)]
+        )
+
     def test_group_by_max(self):
         emp, dep, conn = self._emp_d_fixture()
 

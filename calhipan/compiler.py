@@ -48,6 +48,12 @@ class PandasCompiler(compiler.SQLCompiler):
 
         return resolver.ColumnResolver(name, tablename)
 
+    def visit_unary(self, unary, **kw):
+        return resolver.UnaryResolver(
+                    unary.element._compiler_dispatch(self, **kw),
+                    modifier=unary.modifier,
+                    operator=unary.operator)
+
     def visit_function(self, func, add_to_result_map=None, **kwargs):
         # this is only re-implemented so that we can raise
         # on functions not implemented right here
@@ -261,6 +267,14 @@ class PandasCompiler(compiler.SQLCompiler):
                                         self, **kwargs)
             sel.group_by = group_by
 
+        if select._order_by_clause.clauses:
+            order_by = select._order_by_clause._compiler_dispatch(
+                                        self, **kwargs)
+            sel.order_by = order_by
+
+        sel.limit = select._limit
+        sel.offset = select._offset
+
         self.stack.pop(-1)
 
         return sel
@@ -282,9 +296,13 @@ class PandasCompiler(compiler.SQLCompiler):
 
             )
 
-        compound.group_by = cs._group_by_clause._compiler_dispatch(
+        if cs._group_by_clause.clauses:
+            compound.group_by = cs._group_by_clause._compiler_dispatch(
                                 self, asfrom=asfrom, **kwargs)
-        compound.order_by = self.order_by_clause(cs, **kwargs)
+        if cs._order_by_clause.clauses:
+            compound.order_by = cs._order_by_clause._compiler_dispatch(
+                                self, **kwargs
+                                )
         compound.limit = cs._limit
         compound.offset = cs._offset
 

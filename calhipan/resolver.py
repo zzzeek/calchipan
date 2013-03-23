@@ -49,6 +49,19 @@ class ColumnResolver(ColumnElementResolver):
     def df_index(self):
         return "%s_%s" % (self.tablename, self.name)
 
+class UnaryResolver(ColumnElementResolver):
+    def __init__(self, expression, operator, modifier):
+        self.operator = operator
+        self.modifier = modifier
+        self.expression = expression
+
+    def resolve_expression(self, api, product, namespace, params):
+        return self.expression.resolve_expression(api, product, namespace, params)
+
+    @property
+    def df_index(self):
+        return self.expression.df_index
+
 class LabelResolver(Resolver):
     def __init__(self, expression, name):
         self.expression = expression
@@ -244,66 +257,18 @@ class BindParamResolver(ColumnElementResolver):
     def resolve_expression(self, api, product, namespace, params):
         return params[self.name]
 
-class SelectResolver(FromResolver):
-    whereclause = None
+class BaseSelectResolver(FromResolver):
     group_by = None
-
-    @util.memoized_property
-    def dataframes(self):
-        return []
+    order_by = None
+    limit = None
+    offset = None
 
     @util.memoized_property
     def columns(self):
         return []
 
-    def resolve_dataframe(self, api, namespace, params, names=True):
-        return self(api, namespace, params)
-
-    def resolve_expression(self, api, product, namespace, params):
-        # correlated subquery - resolve for every row.
-        # TODO: probably *dont* need to resolve for every row
-        # for an uncorrelated subquery, can detect that
-        p_df = product.resolve_dataframe(api, namespace, params)
-
-        # iterate through rows in dataframe and form one-row
-        # dataframes.  The ind:ind thing is the only way I could
-        # figure out to achieve this, might be an eaiser way.
-        things = []
-        for ind in api.df_index(p_df):
-            row = api.df_ix_getitem(p_df, slice(ind, ind))
-            df = DerivedResolver(row)
-            thing = self._evaluate(api, namespace, params, correlate=df)
-
-            if len(thing) > 1:
-                raise Exception("Subquery returned more than one row")
-
-            # return as a simple list of scalar values.
-            # the None is for those rows which we had no value
-            things.append(thing[0] if thing else None)
-        return things
-
     def _evaluate(self, api, namespace, params, correlate=None):
-        if not self.dataframes:
-            product = DerivedResolver(api.dataframe([{col.df_index: [1]} for col in self.columns]))
-        else:
-            product = self.dataframes[0]
-        for df in self.dataframes[1:]:
-            product = _cartesian(api, product, df, namespace, params)
-        if correlate:
-            product = _cartesian(api, product, correlate, namespace, params)
-        df = product.resolve_dataframe(api, namespace, params)
-        if self.whereclause is not None:
-            df = api.df_getitem(df, self.whereclause.resolve_expression(
-                            api,
-                            product, namespace, params))
-
-        product = DerivedResolver(df)
-        if correlate:
-            col = self.columns[0].resolve_expression(
-                            api,
-                            product, namespace, params)
-            return api.reset_index(col, drop=True)
-        return product
+        raise NotImplementedError()
 
     def __call__(self, api, namespace, params, correlate=None):
         product = self._evaluate(api, namespace, params, correlate)
@@ -340,26 +305,107 @@ class SelectResolver(FromResolver):
         nu = unique_name()
         names = [nu(c.name) for c in self.columns]
 
-        # select columns and recombine groups together
+        #results = api.concat([api.df_from_items([process_aggregates(gprod)]) for gprod in groups])
+
         group_results = [
             api.df_from_items(
                     [
                         (
-                            name,
+                            c.df_index,
                             expr
                         )
-                        for name, expr in zip(names, process_aggregates(gprod))
+                        for c, expr in zip(self.columns, process_aggregates(gprod))
                     ])
             for gprod in groups
         ]
-        return api.concat(group_results)
+        results = api.concat(group_results)
 
-class CompoundResolver(FromResolver):
+        if self.order_by:
+            cols = []
+            asc = []
+            for idx, ob_expr in enumerate(self.order_by.expressions):
+                ascending = \
+                    not isinstance(ob_expr, UnaryResolver) or \
+                    ob_expr.modifier is not operators.desc_op
+                key = '_sort_%d' % idx
+                results[key] = ob_expr.resolve_expression(
+                        api, DerivedResolver(results), namespace, params)
+                cols.append(key)
+                asc.append(ascending)
+            results = results.sort(columns=cols, ascending=asc).\
+                            reset_index(drop=True)
+            for col in cols:
+                del results[col]
+
+        api.rename(results, columns=dict(
+                        (col.df_index, name)
+                        for col, name in zip(self.columns, names)
+                        ), inplace=True)
+
+        return results
+
+class SelectResolver(BaseSelectResolver):
+    whereclause = None
+
+    @util.memoized_property
+    def dataframes(self):
+        return []
+
+
+    def resolve_dataframe(self, api, namespace, params, names=True):
+        return self(api, namespace, params)
+
+    def resolve_expression(self, api, product, namespace, params):
+        # correlated subquery - resolve for every row.
+        # TODO: probably *dont* need to resolve for every row
+        # for an uncorrelated subquery, can detect that
+        p_df = product.resolve_dataframe(api, namespace, params)
+
+        # iterate through rows in dataframe and form one-row
+        # dataframes.  The ind:ind thing is the only way I could
+        # figure out to achieve this, might be an eaiser way.
+        things = []
+        for ind in api.df_index(p_df):
+            row = api.df_ix_getitem(p_df, slice(ind, ind))
+            df = DerivedResolver(row)
+            thing = self._evaluate(api, namespace, params, correlate=df)
+
+            if len(thing) > 1:
+                raise Exception("Subquery returned more than one row")
+
+            # return as a simple list of scalar values.
+            # the None is for those rows which we had no value
+            things.append(thing[0] if thing else None)
+        return things
+
+    def _evaluate(self, api, namespace, params, correlate=None):
+        if not self.dataframes:
+            # "null" dataframe
+            product = DerivedResolver(api.dataframe(
+                        [{col.df_index: [1]} for col in self.columns]))
+        else:
+            product = self.dataframes[0]
+        for df in self.dataframes[1:]:
+            product = _cartesian(api, product, df, namespace, params)
+        if correlate:
+            product = _cartesian(api, product, correlate, namespace, params)
+        df = product.resolve_dataframe(api, namespace, params)
+        if self.whereclause is not None:
+            df = api.df_getitem(df, self.whereclause.resolve_expression(
+                            api,
+                            product, namespace, params))
+
+        product = DerivedResolver(df)
+        if correlate:
+            col = self.columns[0].resolve_expression(
+                            api,
+                            product, namespace, params)
+            return api.reset_index(col, drop=True)
+        return product
+
+
+class CompoundResolver(BaseSelectResolver):
     keyword = None
-    order_by = None
-    group_by = None
-    limit = None
-    offset = None
 
     @util.memoized_property
     def selects(self):
@@ -368,7 +414,7 @@ class CompoundResolver(FromResolver):
     def resolve_dataframe(self, api, namespace, params, names=True):
         return self(api, namespace, params)
 
-    def __call__(self, api, namespace, params, **kw):
+    def _evaluate(self, api, namespace, params, correlate=None, **kw):
         assert self.keyword is sql.CompoundSelect.UNION_ALL
 
         evaluated = [
@@ -376,15 +422,17 @@ class CompoundResolver(FromResolver):
             for sel in self.selects
         ]
 
-        for ev in evaluated[1:]:
+        self.columns = self.selects[0].columns
+
+        for ev in evaluated:
             api.rename(ev, columns=dict(
-                    (old, new) for old, new in
-                    zip(ev.keys(), evaluated[0].keys())
+                    (old, new.df_index) for old, new in
+                    zip(ev.keys(), self.columns)
                 ),
                 inplace=True)
 
         df = api.concat(evaluated)
-        return df
+        return DerivedResolver(df)
 
 
 def unique_name():
