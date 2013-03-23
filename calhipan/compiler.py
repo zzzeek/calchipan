@@ -13,11 +13,28 @@ from . import resolver
 import datetime
 import pandas as pd
 
+class PandasDDLCompiler(compiler.DDLCompiler):
+    def __init__(self, *arg, **kw):
+        super(PandasDDLCompiler, self).__init__(*arg, **kw)
+        self._panda_fn = self.string
+        self.string = str(self.string)
+
+    def visit_create_table(self, create, **kw):
+        table = create.element
+        return resolver.CreateTableResolver(table.name,
+                    [c.name for c in table.c],
+                    table._autoincrement_column.name
+                    if table._autoincrement_column is not None else None)
+
+    def visit_drop_table(self, drop, **kw):
+        table = drop.element
+        return resolver.DropTableResolver(table.name)
+
 class PandasCompiler(compiler.SQLCompiler):
     def __init__(self, *arg, **kw):
         super(PandasCompiler, self).__init__(*arg, **kw)
         self._panda_fn = self.string
-        self.string = "placeholder"
+        self.string = str(self.string)
 
     def visit_column(self, column, add_to_result_map=None,
                                     include_table=True, **kwargs):
@@ -150,7 +167,9 @@ class PandasCompiler(compiler.SQLCompiler):
 
     def visit_table(self, table, asfrom=False, iscrud=False, ashint=False,
                         fromhints=None, **kwargs):
-        return resolver.TableResolver(table.name)
+        autoinc_col = table._autoincrement_column
+        return resolver.TableResolver(table.name,
+                    autoinc_col.name if autoinc_col is not None else None)
 
     def visit_grouping(self, grouping, asfrom=False, **kwargs):
         return grouping.element._compiler_dispatch(self, **kwargs)
@@ -310,4 +329,25 @@ class PandasCompiler(compiler.SQLCompiler):
 
         return compound
 
+    def visit_insert(self, insert_stmt, **kw):
+        self.isinsert = True
+        colparams = self._get_colparams(insert_stmt)
 
+        if insert_stmt._has_multi_parameters:
+            colparams_single = colparams[0]
+        else:
+            colparams_single = colparams
+
+        ins = resolver.InsertResolver(insert_stmt.table.name)
+
+        ins.columns = [c[0].name for c in colparams_single]
+
+        if self.returning or insert_stmt._returning:
+            raise NotImplementedError("soon...")
+
+        if insert_stmt._has_multi_parameters:
+            ins.values = [[c[1] for c in colparam_set] for colparam_set in colparams]
+        else:
+            ins.values = [c[1] for c in colparams]
+
+        return ins

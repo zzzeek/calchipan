@@ -4,9 +4,18 @@ from calhipan import dbapi, base
 from . import eq_, assert_raises_message
 from sqlalchemy import Table, Column, Integer, union_all, \
         String, MetaData, select, and_, or_, ForeignKey, \
-        func, exc
+        func, exc, schema
 
-class RoundTripTest(TestBase):
+class _ExecBase(object):
+    def _exec_stmt(self, conn, stmt):
+        d = base.PandasDialect()
+        comp = stmt.compile(dialect=d)
+        curs = conn.cursor()
+        curs.execute(comp._panda_fn, comp.params)
+        return curs
+
+
+class RoundTripTest(_ExecBase, TestBase):
 
     def _emp_d_fixture(self):
         emp_df = pd.DataFrame([
@@ -25,13 +34,15 @@ class RoundTripTest(TestBase):
                     ])
         m = MetaData()
         emp = Table('employee', m,
-                    Column('emp_id', Integer, primary_key=True),
+                    Column('emp_id', Integer, autoincrement=False,
+                                                    primary_key=True),
                     Column('name', String),
                     Column('fullname', String),
                     Column('dep_id', Integer, ForeignKey('department.dep_id'))
             )
         dep = Table('department', m,
-                    Column('dep_id', Integer, primary_key=True),
+                    Column('dep_id', Integer, autoincrement=False,
+                                                    primary_key=True),
                     Column('name', String),
                     )
         conn = dbapi.connect(
@@ -487,10 +498,109 @@ class RoundTripTest(TestBase):
             [(1, 'Engineering', 2), (2, 'Accounting', 1)]
         )
 
-    def _exec_stmt(self, conn, stmt):
-        d = base.PandasDialect()
-        comp = stmt.compile(dialect=d)
-        curs = conn.cursor()
-        curs.execute(comp._panda_fn, comp.params)
-        return curs
+class CrudTest(_ExecBase, TestBase):
+    def _emp_d_fixture(self, autoincrement=True):
+        if autoincrement:
+            emp_df = pd.DataFrame(columns=["name", "fullname", "dep_id"])
+            dept_df = pd.DataFrame(columns=["name"])
+        else:
+            emp_df = pd.DataFrame(columns=["emp_id", "name", "fullname", "dep_id"])
+            dept_df = pd.DataFrame(columns=["dep_id", "name"])
+        m = MetaData()
+        emp = Table('employee', m,
+                    Column('emp_id', Integer, autoincrement=autoincrement,
+                                        primary_key=True),
+                    Column('name', String),
+                    Column('fullname', String),
+                    Column('dep_id', Integer, ForeignKey('department.dep_id'))
+            )
+        dep = Table('department', m,
+                    Column('dep_id', Integer, autoincrement=autoincrement,
+                                primary_key=True),
+                    Column('name', String),
+                    )
+        conn = dbapi.connect(
+                        {"employee": emp_df, "department": dept_df},
+                        trace=True)
+        return emp, dep, conn
 
+    def test_empty_select(self):
+        emp, dep, conn = self._emp_d_fixture(True)
+        stmt = select([emp])
+        result = self._exec_stmt(conn, stmt)
+        eq_(result.fetchall(), [])
+
+    def test_autoincrement_select(self):
+        emp, dep, conn = self._emp_d_fixture()
+        conn._namespace['employee'] = conn._namespace['employee'].append(
+                    pd.DataFrame([
+                        {"name": "e1", "fullname": "ef1", "dep_id": 1},
+                        {"name": "e2", "fullname": "ef2", "dep_id": 1},
+                        {"name": "e3", "fullname": "ef3", "dep_id": 1},
+                    ])
+                )
+        stmt = select([emp])
+        result = self._exec_stmt(conn, stmt)
+        eq_(result.fetchall(),
+            [(0, 'e1', 'ef1', 1), (1, 'e2', 'ef2', 1), (2, 'e3', 'ef3', 1)])
+
+    def test_insert_autoincrement(self):
+        emp, dep, conn = self._emp_d_fixture()
+        stmt = emp.insert().values(name='e1', fullname='ef1', dep_id=2)
+        result = self._exec_stmt(conn, stmt)
+        eq_(result.lastrowid, 0)
+
+        stmt = emp.insert().values(name='e2', fullname='ef2', dep_id=2)
+        result = self._exec_stmt(conn, stmt)
+        eq_(result.lastrowid, 1)
+
+        stmt = select([emp])
+        result = self._exec_stmt(conn, stmt)
+        eq_(result.fetchall(),
+            [(0, 'e1', 'ef1', 2), (1, 'e2', 'ef2', 2)])
+
+    def test_insert_multiple_autoincrement(self):
+        emp, dep, conn = self._emp_d_fixture()
+        stmt = emp.insert().values([
+                    dict(name='e1', fullname='ef1', dep_id=2),
+                    dict(name='e2', fullname='ef2', dep_id=2)
+                ])
+        result = self._exec_stmt(conn, stmt)
+        eq_(result.lastrowid, 1)
+
+        stmt = select([emp])
+        result = self._exec_stmt(conn, stmt)
+        eq_(result.fetchall(),
+            [(0, 'e1', 'ef1', 2), (1, 'e2', 'ef2', 2)])
+
+
+class CreateDropTest(_ExecBase, TestBase):
+    def _conn_fixture(self):
+        conn = dbapi.connect(
+                        None,
+                        trace=True)
+        return conn
+
+    def test_create(self):
+        conn = self._conn_fixture()
+        m = MetaData()
+        t = Table('test', m,
+                Column('x', Integer),
+                Column('y', Integer)
+            )
+        self._exec_stmt(conn, schema.CreateTable(t))
+        eq_(
+            list(conn._namespace['test'].keys()),
+            ['x', 'y']
+        )
+
+    def test_drop(self):
+        conn = self._conn_fixture()
+        m = MetaData()
+        t = Table('test', m,
+                Column('x', Integer),
+                Column('y', Integer)
+            )
+        self._exec_stmt(conn, schema.CreateTable(t))
+        self._exec_stmt(conn, schema.DropTable(t))
+        assert 'test' not in conn._namespace

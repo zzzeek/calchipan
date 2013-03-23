@@ -13,7 +13,7 @@ class Resolver(object):
     pass
 
 class ColumnElementResolver(Resolver):
-    def resolve_expression(self, api, product, namespace, params):
+    def resolve_expression(self, cursor, product, namespace, params):
         raise NotImplementedError()
 
 class FunctionResolver(ColumnElementResolver):
@@ -22,9 +22,9 @@ class FunctionResolver(ColumnElementResolver):
         self.expr = expr
         self.aggregate = aggregate
 
-    def resolve_expression(self, api, product, namespace, params):
+    def resolve_expression(self, cursor, product, namespace, params):
         q = self.fn(self.expr.resolve_expression(
-                    api, product, namespace, params))
+                    cursor, product, namespace, params))
         if self.aggregate:
             q = Aggregate(q)
         return q
@@ -38,13 +38,13 @@ class ColumnResolver(ColumnElementResolver):
         self.name = name
         self.tablename = tablename
 
-    def resolve_expression(self, api, product, namespace, params):
+    def resolve_expression(self, cursor, product, namespace, params):
         if product is None:
             df = TableResolver(self.tablename).\
-                        resolve_dataframe(api, namespace, params)
+                        resolve_dataframe(cursor, namespace, params)
         else:
-            df = product.resolve_dataframe(api, namespace, params)
-        return api.df_getitem(df, self.df_index)
+            df = product.resolve_dataframe(cursor, namespace, params)
+        return cursor.api.df_getitem(df, self.df_index)
 
     @property
     def df_index(self):
@@ -56,8 +56,9 @@ class UnaryResolver(ColumnElementResolver):
         self.modifier = modifier
         self.expression = expression
 
-    def resolve_expression(self, api, product, namespace, params):
-        return self.expression.resolve_expression(api, product, namespace, params)
+    def resolve_expression(self, cursor, product, namespace, params):
+        return self.expression.resolve_expression(
+                            cursor, product, namespace, params)
 
     @property
     def df_index(self):
@@ -68,9 +69,9 @@ class LabelResolver(Resolver):
         self.expression = expression
         self.name = name
 
-    def resolve_expression(self, api, product, namespace, params):
+    def resolve_expression(self, cursor, product, namespace, params):
         return self.expression.resolve_expression(
-                                        api,
+                                        cursor,
                                         product, namespace, params)
 
     @property
@@ -84,22 +85,29 @@ class DerivedResolver(FromResolver):
     def __init__(self, dataframe):
         self.dataframe = dataframe
 
-    def resolve_dataframe(self, api, namespace, params, names=True):
+    def resolve_dataframe(self, cursor, namespace, params, names=True):
         return self.dataframe
 
 
 class TableResolver(FromResolver):
-    def __init__(self, tablename):
+    def __init__(self, tablename, autoincrement_col=None):
         self.tablename = tablename
+        self.autoincrement_col = autoincrement_col
 
-    def resolve_dataframe(self, api, namespace, params, names=True):
+    def resolve_dataframe(self, cursor, namespace, params, names=True):
+        # TODO: some caching here might help, not sure how
+        # expensive it is to copy the cols from one dataframe
+        # into another
         df = namespace[self.tablename]
         if names:
-            df = api.dataframe(
-                        dict(
+            cols = dict(
                             ("%s_%s" % (self.tablename, k), df[k])
                             for k in df.keys()
-                        ))
+                        )
+            if self.autoincrement_col and self.autoincrement_col not in df:
+                cols["%s_%s" %
+                        (self.tablename, self.autoincrement_col)] = df.index
+            df = cursor.api.dataframe(cols)
         return df
 
 class JoinResolver(FromResolver):
@@ -109,18 +117,18 @@ class JoinResolver(FromResolver):
         self.onclause = onclause
         self.isouter = isouter
 
-    def resolve_dataframe(self, api, namespace, params, names=True):
-        df1 = left = self.left.resolve_dataframe(api, namespace, params)
-        df2 = self.right.resolve_dataframe(api, namespace, params)
+    def resolve_dataframe(self, cursor, namespace, params, names=True):
+        df1 = left = self.left.resolve_dataframe(cursor, namespace, params)
+        df2 = self.right.resolve_dataframe(cursor, namespace, params)
 
         if self.isouter:
             left['_cp_left_index'] = left.index
 
         straight_binaries, remainder = self._produce_join_expressions(df1, df2)
 
-        df1 = self._merge_straight_binaries(api, df1, df2, straight_binaries)
+        df1 = self._merge_straight_binaries(cursor, df1, df2, straight_binaries)
 
-        df1 = self._merge_remainder(api, left, df1, df2,
+        df1 = self._merge_remainder(cursor, left, df1, df2,
                             namespace, params, straight_binaries, remainder)
         return df1.where(pd.notnull(df1), None)
 
@@ -158,15 +166,15 @@ class JoinResolver(FromResolver):
             remainder.append(comp)
         return straight_binaries, remainder
 
-    def _merge_straight_binaries(self, api, df1, df2, straight_binaries):
+    def _merge_straight_binaries(self, cursor, df1, df2, straight_binaries):
         if straight_binaries:
             # use merge() for straight binaries.
             left_on, right_on = zip(*straight_binaries)
-            df1 = api.merge(df1, df2, left_on=left_on, right_on=right_on,
+            df1 = cursor.api.merge(df1, df2, left_on=left_on, right_on=right_on,
                             how='left' if self.isouter else 'inner')
         return df1
 
-    def _merge_remainder(self, api, left, df1, df2,
+    def _merge_remainder(self, cursor, left, df1, df2,
                             namespace, params, straight_binaries, remainder):
         # for joins that aren't straight "col == col",
         # we use the ON criterion directly.
@@ -185,12 +193,12 @@ class JoinResolver(FromResolver):
             # those columns we need in the expression.   Then reindex
             # back out to the original dataframes.
             if not straight_binaries:
-                df1 = _cartesian_dataframe(api, df1, df2)
+                df1 = _cartesian_dataframe(cursor, df1, df2)
             expr = remainder.resolve_expression(
-                        api, DerivedResolver(df1), namespace, params
+                        cursor, DerivedResolver(df1), namespace, params
                     )
 
-            joined = api.df_getitem(df1, expr)
+            joined = cursor.api.df_getitem(df1, expr)
 
             if self.isouter:
                 # for outer join, grab remaining rows from "left"
@@ -208,10 +216,10 @@ class AliasResolver(FromResolver):
         self.table = table
         self.aliasname = aliasname
 
-    def resolve_dataframe(self, api, namespace, params, names=True):
-        df = self.table.resolve_dataframe(api, namespace, params, names=False)
+    def resolve_dataframe(self, cursor, namespace, params, names=True):
+        df = self.table.resolve_dataframe(cursor, namespace, params, names=False)
         if names:
-            df = api.dataframe(
+            df = cursor.api.dataframe(
                         dict(
                             ("%s_%s" % (self.aliasname, k), df[k])
                             for k in df.keys()
@@ -224,12 +232,12 @@ class BinaryResolver(ColumnElementResolver):
         self.right = right
         self.operator = operator
 
-    def resolve_expression(self, api, product, namespace, params):
+    def resolve_expression(self, cursor, product, namespace, params):
         return self.operator(
                     self.left.resolve_expression(
-                                            api, product, namespace, params),
+                                            cursor, product, namespace, params),
                     self.right.resolve_expression(
-                                            api, product, namespace, params),
+                                            cursor, product, namespace, params),
                 )
 
 class ClauseListResolver(ColumnElementResolver):
@@ -237,9 +245,9 @@ class ClauseListResolver(ColumnElementResolver):
         self.expressions = expressions
         self.operator = operator
 
-    def resolve_expression(self, api, product, namespace, params):
+    def resolve_expression(self, cursor, product, namespace, params):
         exprs = [expr.resolve_expression(
-                                            api,
+                                            cursor,
                                             product, namespace, params)
                         for expr in self.expressions]
 
@@ -255,7 +263,7 @@ class BindParamResolver(ColumnElementResolver):
     def __init__(self, name):
         self.name = name
 
-    def resolve_expression(self, api, product, namespace, params):
+    def resolve_expression(self, cursor, product, namespace, params):
         return params[self.name]
 
 class BaseSelectResolver(FromResolver):
@@ -268,16 +276,16 @@ class BaseSelectResolver(FromResolver):
     def columns(self):
         return []
 
-    def _evaluate(self, api, namespace, params, correlate=None):
+    def _evaluate(self, cursor, namespace, params, correlate=None):
         raise NotImplementedError()
 
-    def __call__(self, api, namespace, params, correlate=None):
-        product = self._evaluate(api, namespace, params, correlate)
+    def __call__(self, cursor, namespace, params, correlate=None):
+        product = self._evaluate(cursor, namespace, params, correlate)
 
         if self.group_by is not None:
-            df = product.resolve_dataframe(api, namespace, params)
+            df = product.resolve_dataframe(cursor, namespace, params)
             gp = self.group_by.resolve_expression(
-                            api, product, namespace, params)
+                            cursor, product, namespace, params)
             groups = [DerivedResolver(gdf[1]) for gdf in df.groupby(gp)]
         else:
             groups = [product]
@@ -287,7 +295,7 @@ class BaseSelectResolver(FromResolver):
             """detect aggregate funcitons in column clauses and
             flatten results if present
             """
-            cols = [c.resolve_expression(api, gprod, namespace,
+            cols = [c.resolve_expression(cursor, gprod, namespace,
                                                     params)
                     for c in self.columns]
             for c in cols:
@@ -307,7 +315,7 @@ class BaseSelectResolver(FromResolver):
         names = [nu(c.name) for c in self.columns]
 
         group_results = [
-            api.df_from_items(
+            cursor.api.df_from_items(
                     [
                         (
                             c.df_index,
@@ -318,7 +326,11 @@ class BaseSelectResolver(FromResolver):
                     ])
             for gprod in groups
         ]
-        results = api.concat(group_results)
+        non_empty = [g for g in group_results if len(g)]
+        if not non_empty:
+            return cursor.api.dataframe(columns=names)
+        else:
+            results = cursor.api.concat(non_empty)
 
         if self.order_by:
             cols = []
@@ -329,7 +341,7 @@ class BaseSelectResolver(FromResolver):
                     ob_expr.modifier is not operators.desc_op
                 key = '_sort_%d' % idx
                 results[key] = ob_expr.resolve_expression(
-                        api, DerivedResolver(results), namespace, params)
+                        cursor, DerivedResolver(results), namespace, params)
                 cols.append(key)
                 asc.append(ascending)
             results = results.sort(columns=cols, ascending=asc).\
@@ -337,7 +349,7 @@ class BaseSelectResolver(FromResolver):
             for col in cols:
                 del results[col]
 
-        api.rename(results, columns=dict(
+        cursor.api.rename(results, columns=dict(
                         (col.df_index, name)
                         for col, name in zip(self.columns, names)
                         ), inplace=True)
@@ -352,23 +364,23 @@ class SelectResolver(BaseSelectResolver):
         return []
 
 
-    def resolve_dataframe(self, api, namespace, params, names=True):
-        return self(api, namespace, params)
+    def resolve_dataframe(self, cursor, namespace, params, names=True):
+        return self(cursor, namespace, params)
 
-    def resolve_expression(self, api, product, namespace, params):
+    def resolve_expression(self, cursor, product, namespace, params):
         # correlated subquery - resolve for every row.
         # TODO: probably *dont* need to resolve for every row
         # for an uncorrelated subquery, can detect that
-        p_df = product.resolve_dataframe(api, namespace, params)
+        p_df = product.resolve_dataframe(cursor, namespace, params)
 
         # iterate through rows in dataframe and form one-row
         # dataframes.  The ind:ind thing is the only way I could
         # figure out to achieve this, might be an eaiser way.
         things = []
-        for ind in api.df_index(p_df):
-            row = api.df_ix_getitem(p_df, slice(ind, ind))
+        for ind in cursor.api.df_index(p_df):
+            row = cursor.api.df_ix_getitem(p_df, slice(ind, ind))
             df = DerivedResolver(row)
-            thing = self._evaluate(api, namespace, params, correlate=df)
+            thing = self._evaluate(cursor, namespace, params, correlate=df)
 
             if len(thing) > 1:
                 raise dbapi.Error("Subquery returned more than one row")
@@ -378,29 +390,29 @@ class SelectResolver(BaseSelectResolver):
             things.append(thing[0] if thing else None)
         return things
 
-    def _evaluate(self, api, namespace, params, correlate=None):
+    def _evaluate(self, cursor, namespace, params, correlate=None):
         if not self.dataframes:
             # "null" dataframe
-            product = DerivedResolver(api.dataframe(
+            product = DerivedResolver(cursor.api.dataframe(
                         [{col.df_index: [1]} for col in self.columns]))
         else:
             product = self.dataframes[0]
         for df in self.dataframes[1:]:
-            product = _cartesian(api, product, df, namespace, params)
+            product = _cartesian(cursor, product, df, namespace, params)
         if correlate:
-            product = _cartesian(api, product, correlate, namespace, params)
-        df = product.resolve_dataframe(api, namespace, params)
+            product = _cartesian(cursor, product, correlate, namespace, params)
+        df = product.resolve_dataframe(cursor, namespace, params)
         if self.whereclause is not None:
-            df = api.df_getitem(df, self.whereclause.resolve_expression(
-                            api,
+            df = cursor.api.df_getitem(df, self.whereclause.resolve_expression(
+                            cursor,
                             product, namespace, params))
 
         product = DerivedResolver(df)
         if correlate:
             col = self.columns[0].resolve_expression(
-                            api,
+                            cursor,
                             product, namespace, params)
-            return api.reset_index(col, drop=True)
+            return cursor.api.reset_index(col, drop=True)
         return product
 
 
@@ -415,26 +427,88 @@ class CompoundResolver(BaseSelectResolver):
     def columns(self):
         return self.selects[0].columns
 
-    def resolve_dataframe(self, api, namespace, params, names=True):
-        return self(api, namespace, params)
+    def resolve_dataframe(self, cursor, namespace, params, names=True):
+        return self(cursor, namespace, params)
 
-    def _evaluate(self, api, namespace, params, correlate=None, **kw):
+    def _evaluate(self, cursor, namespace, params, correlate=None, **kw):
         assert self.keyword is sql.CompoundSelect.UNION_ALL
 
         evaluated = [
-            sel(api, namespace, params, **kw)
+            sel(cursor, namespace, params, **kw)
             for sel in self.selects
         ]
 
         for ev in evaluated:
-            api.rename(ev, columns=dict(
+            cursor.api.rename(ev, columns=dict(
                     (old, new.df_index) for old, new in
                     zip(ev.keys(), self.columns)
                 ),
                 inplace=True)
 
-        df = api.concat(evaluated)
+        df = cursor.api.concat(evaluated)
         return DerivedResolver(df)
+
+class CRUDResolver(Resolver):
+    pass
+
+class InsertResolver(CRUDResolver):
+    columns = ()
+    values = ()
+
+    def __init__(self, tablename):
+        self.tablename = tablename
+
+    def __call__(self, cursor, namespace, params, **kw):
+        df = namespace[self.tablename]
+        # TODO: add append() to api
+        if not self.values:
+            new = df.append({}, ignore_index=True)
+        elif isinstance(self.values[0], list):
+            # TODO: not sure what ignore_index actually means,
+            # or if there are performance enhancements that can be
+            # made here
+            new = df.append(
+                cursor.api.dataframe(
+                    [
+                        dict((c,
+                            v.resolve_expression(cursor, None, namespace, params))
+                            for c, v in zip(self.columns, row))
+                        for row in self.values
+                    ]
+                ), ignore_index=True
+            )
+        else:
+            new = df.append(dict(
+                    (c, v.resolve_expression(cursor, None, namespace, params))
+                    for c, v in zip(self.columns, self.values)
+                ), ignore_index=True)
+        namespace[self.tablename] = new
+        cursor.lastrowid = new.index[-1]
+
+class DDLResolver(Resolver):
+    pass
+
+class CreateTableResolver(DDLResolver):
+    def __init__(self, tablename, colnames, autoincrement_col):
+        self.tablename = tablename
+        self.colnames = colnames
+        self.autoincrement_col = autoincrement_col
+
+    def __call__(self, cursor, namespace, params, **kw):
+        if self.tablename in namespace:
+            raise dbapi.Error("Dataframe '%s' already exists" % self.tablename)
+
+        namespace[self.tablename] = cursor.api.dataframe(
+            columns=[c for c in self.colnames if c != self.autoincrement_col])
+
+class DropTableResolver(DDLResolver):
+    def __init__(self, tablename):
+        self.tablename = tablename
+
+    def __call__(self, cursor, namespace, params, **kw):
+        if self.tablename not in namespace:
+            raise dbapi.Error("No such dataframe '%s'" % self.tablename)
+        del namespace[self.tablename]
 
 
 def unique_name():
@@ -448,7 +522,7 @@ def unique_name():
             return name
     return go
 
-def _cartesian(api, f1, f2, namespace, params):
+def _cartesian(cursor, f1, f2, namespace, params):
     """produce a cartesian product.
 
     This is to support multiple FROM clauses against a WHERE.
@@ -458,18 +532,18 @@ def _cartesian(api, f1, f2, namespace, params):
     at least.
 
     """
-    df1, df2 = f1.resolve_dataframe(api, namespace, params), \
-                    f2.resolve_dataframe(api, namespace, params)
+    df1, df2 = f1.resolve_dataframe(cursor, namespace, params), \
+                    f2.resolve_dataframe(cursor, namespace, params)
 
     return DerivedResolver(
-                _cartesian_dataframe(api, df1, df2)
+                _cartesian_dataframe(cursor, df1, df2)
             )
 
 
-def _cartesian_dataframe(api, df1, df2):
+def _cartesian_dataframe(cursor, df1, df2):
     if '_cartesian_ones' not in df1:
-        df1['_cartesian_ones'] = api.np_ones(len(df1))
+        df1['_cartesian_ones'] = cursor.api.np_ones(len(df1))
     if '_cartesian_ones' not in df2:
-        df2['_cartesian_ones'] = api.np_ones(len(df2))
-    return api.merge(df1, df2, on='_cartesian_ones')
+        df2['_cartesian_ones'] = cursor.api.np_ones(len(df2))
+    return cursor.api.merge(df1, df2, on='_cartesian_ones')
 

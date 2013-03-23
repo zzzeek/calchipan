@@ -7,21 +7,38 @@ from . import eq_, assert_raises_message
 
 class DialectTest(TestBase):
 
-    def _emp_d_fixture(self):
-        emp_df = pd.DataFrame([
-                {"emp_id": 1, "name": "ed", "fullname": "Ed Jones",
-                        "dep_id": 1},
-                {"emp_id": 2, "name": "wendy", "fullname": "Wendy Wharton",
-                        "dep_id": 1},
-                {"emp_id": 3, "name": "jack", "fullname": "Jack Smith",
-                        "dep_id": 2},
+    def _emp_d_fixture(self, id_cols=True):
+        if id_cols:
+            emp_df = pd.DataFrame([
+                    {"emp_id": 1, "name": "ed", "fullname": "Ed Jones",
+                            "dep_id": 1},
+                    {"emp_id": 2, "name": "wendy", "fullname": "Wendy Wharton",
+                            "dep_id": 1},
+                    {"emp_id": 3, "name": "jack", "fullname": "Jack Smith",
+                            "dep_id": 2},
 
-            ])
-        dept_df = pd.DataFrame([
-                    {"dep_id": 1, "name": "Engineering"},
-                    {"dep_id": 2, "name": "Accounting"},
-                    {"dep_id": 3, "name": "Sales"},
-                    ])
+                ])
+            dept_df = pd.DataFrame([
+                        {"dep_id": 1, "name": "Engineering"},
+                        {"dep_id": 2, "name": "Accounting"},
+                        {"dep_id": 3, "name": "Sales"},
+                        ])
+        else:
+            emp_df = pd.DataFrame([
+                    {"name": "ed", "fullname": "Ed Jones",
+                            "dep_id": 0},
+                    {"name": "wendy", "fullname": "Wendy Wharton",
+                            "dep_id": 0},
+                    {"name": "jack", "fullname": "Jack Smith",
+                            "dep_id": 1},
+
+                ])
+            dept_df = pd.DataFrame([
+                        {"name": "Engineering"},
+                        {"name": "Accounting"},
+                        {"name": "Sales"},
+                        ])
+
         return {"employee": emp_df, "department": dept_df}
 
     def _md_fixture(self):
@@ -72,14 +89,21 @@ class DialectTest(TestBase):
             [('hi',)]
         )
 
-    def test_no_ddl(self):
+    def test_inserted_primary_key_autoinc(self):
         eng = create_engine("pandas+calhipan://",
-                    namespace=self._emp_d_fixture())
-        m = MetaData()
-        Table('t', m, Column('x', Integer))
+                    namespace={"employee":
+                            pd.DataFrame(columns=["name", "dep_id"])})
+        emp, dep = self._md_fixture()
+        r = eng.execute(emp.insert().values(name="ed", dep_id=5))
+        eq_(r.inserted_primary_key, [0])
 
-        assert_raises_message(
-            exc.StatementError,
-            "Only Pandas-compiled statements can be executed by this dialect",
-            m.create_all, eng
-        )
+        r = eng.execute(emp.insert().values(name="jack", dep_id=12))
+        eq_(r.inserted_primary_key, [1])
+
+    def test_inserted_primary_key_manualinc(self):
+        eng = create_engine("pandas+calhipan://",
+                    namespace={"employee":
+                            pd.DataFrame(columns=["emp_id", "name", "dep_id"])})
+        emp, dep = self._md_fixture()
+        r = eng.execute(emp.insert().values(emp_id=3, name="ed", dep_id=5))
+        eq_(r.inserted_primary_key, [3])

@@ -47,6 +47,10 @@ class Connection(object):
         pass
 
 class Cursor(object):
+    _result = None
+    lastrowid = None
+    rowcount = None
+
     def __init__(self, connection):
         self.namespace = connection._namespace
         self.api = connection.api
@@ -56,10 +60,10 @@ class Cursor(object):
 
         The 'statement' here is a callable of the form::
 
-                def execute(api, namespace, params):
+                def execute(cursor, namespace, params):
                     ''
 
-        Where ``api`` is an instance of :class:`.PandasAPI`,
+        Where ``cursor`` is the cursor,
         ``namespace`` is the namespace dictionary associated with the
         :class:`.Connection`, and ``params`` is the params dict passed
         here.  The callable should return a Pandas DataFrame object.
@@ -67,19 +71,22 @@ class Cursor(object):
         """
         if isinstance(stmt, compat.basestring):
             raise Error("Only Pandas callable functions accepted for execute()")
-        result = stmt(self.api, self.namespace, params)
+        self._result = self.description = self.lastrowid = None
+        result = stmt(self, self.namespace, params)
 
-        self._result = list(result.itertuples(index=False))
-        # type would be: result[k].dtype
-        # but this isn't really compatible with DBAPI's
-        # constant model; sqlite3 just returns None
-        # so do that for now.
-        self.description = [
-                    (k, None, None, None, None, None, None)
-                    for k in result.keys()]
+        if isinstance(result, pd.DataFrame):
+            self._result = list(result.itertuples(index=False))
+            # type would be: result[k].dtype
+            # but this isn't really compatible with DBAPI's
+            # constant model; sqlite3 just returns None
+            # so do that for now.
+            self.description = [
+                        (k, None, None, None, None, None, None)
+                        for k in result.keys()]
 
     def executemany(self, stmt, multiparams):
-        raise NotImplementedError()
+        for param in multiparams:
+            self.execute(stmt, param)
 
     def fetchone(self):
         if not self._result:
