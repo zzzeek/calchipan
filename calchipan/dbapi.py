@@ -2,6 +2,8 @@
 import pandas as pd
 import numpy as np
 from . import compat
+import itertools
+
 
 def connect(namespace=None, trace=False):
     """Create a 'connection'.
@@ -75,7 +77,8 @@ class Cursor(object):
         result = stmt(self, self.namespace, params)
 
         if isinstance(result, pd.DataFrame):
-            self._result = list(result.itertuples(index=False))
+            self.dataframe = result
+            self._rowset = result.itertuples(index=False)
             # type would be: result[k].dtype
             # but this isn't really compatible with DBAPI's
             # constant model; sqlite3 just returns None
@@ -89,20 +92,17 @@ class Cursor(object):
             self.execute(stmt, param)
 
     def fetchone(self):
-        if not self._result:
+        try:
+            return next(self._rowset)
+        except StopIteration:
             return None
-        return self._result.pop(0)
 
     def fetchmany(self, size=None):
         size = size or 1
-        ret = self._result[0:size]
-        self._result[:size] = []
-        return ret
+        return itertools.islice(self._rowset, 0, size)
 
     def fetchall(self):
-        ret = self._result[:]
-        self._result[:] = []
-        return ret
+        return list(self._rowset)
 
     def close(self):
         pass

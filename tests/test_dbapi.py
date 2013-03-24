@@ -41,6 +41,22 @@ class DBAPITest(TestBase):
             (3, 'string: 3', 0.016419), (4, 'string: 4', 0.021892)]
         )
 
+    def test_dataframe(self):
+        def stmt(trace, namespace, params):
+            return namespace["df1"][["col1", "col2", "col3"]]
+
+        conn = dbapi.connect(self._simple_fixture())
+        curs = conn.cursor()
+        curs.execute(stmt)
+        eq_(
+            list(curs.dataframe.itertuples(index=False)),
+            [(0, 'string: 0', 0.0),
+            (1, 'string: 1', 0.0054729999999999996),
+            (2, 'string: 2', 0.010945999999999999),
+            (3, 'string: 3', 0.016419),
+            (4, 'string: 4', 0.021891999999999998)]
+        )
+
     def test_description(self):
         def stmt(trace, namespace, params):
             return namespace["df1"][["col1", "col2", "col3"]]
