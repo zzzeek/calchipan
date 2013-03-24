@@ -132,30 +132,10 @@ class PandasAPI(object):
             self._buf.append(("rename", df, columns))
         return df.rename(columns=columns, inplace=inplace, copy=copy)
 
-    def np_ones(self, length):
+    def df_sort(self, df, **kw):
         if self.log:
-            self._buf.append(("ones", length))
-        return np.ones(length)
-
-    def reset_index(self, col, **kw):
-        if self.log:
-            self._buf.append(("reset_index", col, kw))
-        return col.reset_index(**kw)
-
-    def df_getitem(self, df, expr):
-        if self.log:
-            self._buf.append(("getitem", df, expr))
-        return df[expr]
-
-    def df_index(self, df):
-        if self.log:
-            self._buf.append(("index", df))
-        return df.index
-
-    def df_ix_getitem(self, df, expr):
-        if self.log:
-            self._buf.append(("ix_getitem", df, expr))
-        return df.ix[expr]
+            self._buf.append(("sort", df, kw))
+        return df.sort(**kw)
 
     def dataframe(self, *arg, **kw):
         df = pd.DataFrame(*arg, **kw)

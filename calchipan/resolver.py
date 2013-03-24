@@ -7,6 +7,7 @@ from sqlalchemy import sql
 from sqlalchemy import util
 import functools
 import pandas as pd
+import numpy as np
 import collections
 from . import dbapi
 
@@ -48,7 +49,7 @@ class ColumnResolver(ColumnElementResolver):
                         resolve_dataframe(cursor, namespace, params)
         else:
             df = product.resolve_dataframe(cursor, namespace, params)
-        return cursor.api.df_getitem(df, self.df_index)
+        return df[self.df_index]
 
     @property
     def df_index(self):
@@ -273,7 +274,7 @@ class JoinResolver(FromResolver):
                         cursor, DerivedResolver(df1), namespace, params
                     )
 
-            joined = cursor.api.df_getitem(df1, expr)
+            joined = df1[expr]
 
             if self.isouter:
                 # for outer join, grab remaining rows from "left"
@@ -391,7 +392,7 @@ class BaseSelectResolver(FromResolver):
                         cursor, DerivedResolver(results), namespace, params)
                 cols.append(key)
                 asc.append(ascending)
-            results = results.sort(columns=cols, ascending=asc).\
+            results = cursor.api.df_sort(results, columns=cols, ascending=asc).\
                             reset_index(drop=True)
             for col in cols:
                 del results[col]
@@ -430,8 +431,8 @@ class SelectResolver(BaseSelectResolver):
         # dataframes.  The ind:ind thing is the only way I could
         # figure out to achieve this, might be an eaiser way.
         things = []
-        for ind in cursor.api.df_index(p_df):
-            row = cursor.api.df_ix_getitem(p_df, slice(ind, ind))
+        for ind in p_df.index:
+            row = p_df.ix[ind:ind]
             df = DerivedResolver(row)
             thing = self._evaluate(cursor, namespace, params, correlate=df)
 
@@ -451,9 +452,9 @@ class SelectResolver(BaseSelectResolver):
             product = _cartesian(cursor, product, correlate, namespace, params)
         df = product.resolve_dataframe(cursor, namespace, params)
         if self.whereclause is not None:
-            df = cursor.api.df_getitem(df, self.whereclause.resolve_expression(
+            df = df[self.whereclause.resolve_expression(
                             cursor,
-                            product, namespace, params))
+                            product, namespace, params)]
 
         product = DerivedResolver(df)
         if correlate:
@@ -548,17 +549,15 @@ class UpdateResolver(CRUDResolver):
                         autoincrement_col=self.autoincrement_col)
         df = product.resolve_dataframe(cursor, namespace, params)
         if self.whereclause is not None:
-            df_ind = cursor.api.df_getitem(df,
-                            self.whereclause.resolve_expression(
+            df_ind = df[self.whereclause.resolve_expression(
                                 cursor,
-                                product, namespace, params))
+                                product, namespace, params)]
         else:
             df_ind = df
 
         # doing an UPDATE huh?  Yeah, this is quite slow, sorry.
-        for ind in cursor.api.df_index(df_ind):
-            product = DerivedResolver(
-                            cursor.api.df_ix_getitem(df_ind, slice(ind, ind)))
+        for ind in df_ind.index:
+            product = DerivedResolver(df_ind.ix[ind:ind])
 
             for k, v in self.values:
                 thing = v.resolve_expression(cursor, product, namespace, params)
@@ -580,10 +579,9 @@ class DeleteResolver(CRUDResolver):
                         autoincrement_col=self.autoincrement_col)
         df = product.resolve_dataframe(cursor, namespace, params)
         if self.whereclause is not None:
-            df_ind = cursor.api.df_getitem(df,
-                            self.whereclause.resolve_expression(
+            df_ind = df[self.whereclause.resolve_expression(
                                 cursor,
-                                product, namespace, params))
+                                product, namespace, params)]
         else:
             df_ind = df
 
@@ -621,7 +619,7 @@ class DropTableResolver(DDLResolver):
 
 def _coerce_to_scalar(cursor, col):
     if isinstance(col, pd.Series):
-        col = cursor.api.reset_index(col, drop=True)
+        col = col.reset_index(drop=True)
         if len(col) > 1:
             raise dbapi.Error("scalar expression "
                     "returned more than one row")
@@ -659,8 +657,8 @@ def _cartesian(cursor, f1, f2, namespace, params):
 
 def _cartesian_dataframe(cursor, df1, df2):
     if '_cartesian_ones' not in df1:
-        df1['_cartesian_ones'] = cursor.api.np_ones(len(df1))
+        df1['_cartesian_ones'] = np.ones(len(df1))
     if '_cartesian_ones' not in df2:
-        df2['_cartesian_ones'] = cursor.api.np_ones(len(df2))
+        df2['_cartesian_ones'] = np.ones(len(df2))
     return cursor.api.merge(df1, df2, on='_cartesian_ones')
 
