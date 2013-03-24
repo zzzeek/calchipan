@@ -1,6 +1,6 @@
 from sqlalchemy.testing.fixtures import TestBase
 import pandas as pd
-from calhipan import dbapi, base
+from calchipan import dbapi, base
 from . import eq_, assert_raises_message
 from sqlalchemy import Table, Column, Integer, union_all, \
         String, MetaData, select, and_, or_, ForeignKey, \

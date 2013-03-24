@@ -15,7 +15,7 @@ class PandasExecutionContext(default.DefaultExecutionContext):
 
 class PandasDialect(default.DefaultDialect):
     name = "pandas"
-    driver = "calhipan"
+    driver = "calchipan"
 
     statement_compiler = PandasCompiler
     ddl_compiler = PandasDDLCompiler

@@ -1,6 +1,6 @@
 from sqlalchemy.testing.fixtures import TestBase
 import pandas as pd
-from calhipan import dbapi
+from calchipan import dbapi
 from . import eq_, assert_raises_message
 
 class DBAPITest(TestBase):

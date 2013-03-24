@@ -56,13 +56,13 @@ class DialectTest(TestBase):
         return emp, dep
 
     def test_has_table(self):
-        eng = create_engine("pandas+calhipan://",
+        eng = create_engine("pandas+calchipan://",
                     namespace=self._emp_d_fixture())
         assert eng.has_table('employee')
         assert not eng.has_table('fake')
 
     def test_execute_compiled(self):
-        eng = create_engine("pandas+calhipan://",
+        eng = create_engine("pandas+calchipan://",
                     namespace=self._emp_d_fixture())
         emp, dep = self._md_fixture()
         result = eng.execute(select([emp]))
@@ -74,7 +74,7 @@ class DialectTest(TestBase):
         )
 
     def test_execute_standalone_fn(self):
-        eng = create_engine("pandas+calhipan://",
+        eng = create_engine("pandas+calchipan://",
                     namespace=self._emp_d_fixture())
         emp, dep = self._md_fixture()
 
@@ -90,7 +90,7 @@ class DialectTest(TestBase):
         )
 
     def test_inserted_primary_key_autoinc(self):
-        eng = create_engine("pandas+calhipan://",
+        eng = create_engine("pandas+calchipan://",
                     namespace={"employee":
                             pd.DataFrame(columns=["name", "dep_id"])})
         emp, dep = self._md_fixture()
@@ -101,7 +101,7 @@ class DialectTest(TestBase):
         eq_(r.inserted_primary_key, [1])
 
     def test_inserted_primary_key_manualinc(self):
-        eng = create_engine("pandas+calhipan://",
+        eng = create_engine("pandas+calchipan://",
                     namespace={"employee":
                             pd.DataFrame(columns=["emp_id", "name", "dep_id"])})
         emp, dep = self._md_fixture()
