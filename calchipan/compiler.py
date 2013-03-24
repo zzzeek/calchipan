@@ -15,28 +15,53 @@ import pandas as pd
 from . import operators as ca_operators
 
 class PandasDDLCompiler(compiler.DDLCompiler):
+    statement = None
+
     def __init__(self, *arg, **kw):
         super(PandasDDLCompiler, self).__init__(*arg, **kw)
-        self._panda_fn = self.string
-        self.string = str(self.string)
+        if self.statement is not None:
+            self._panda_fn = self.string
+            self.string = str(self.string)
 
     def visit_create_table(self, create, **kw):
         table = create.element
         return resolver.CreateTableResolver(table.name,
                     [c.name for c in table.c],
+                    [c.type for c in table.c],
                     table._autoincrement_column.name
                     if table._autoincrement_column is not None else None,
                     table.kwargs.get('pandas_index_pk', False))
+
+    def visit_create_view(self, view, **kw):
+        raise NotImplementedError()
+
+    def visit_drop_view(self, view, **kw):
+        raise NotImplementedError()
 
     def visit_drop_table(self, drop, **kw):
         table = drop.element
         return resolver.DropTableResolver(table.name)
 
+    def visit_create_index(self, ind, **kw):
+        return resolver.NullResolver()
+
+    def visit_drop_index(self, ind, **kw):
+        return resolver.NullResolver()
+
+    def visit_create_constraint(self, ind, **kw):
+        return resolver.NullResolver()
+
+    def visit_drop_constraint(self, ind, **kw):
+        return resolver.NullResolver()
+
 class PandasCompiler(compiler.SQLCompiler):
+    statement = None
+
     def __init__(self, *arg, **kw):
         super(PandasCompiler, self).__init__(*arg, **kw)
-        self._panda_fn = self.string
-        self.string = str(self.string)
+        if self.statement is not None:
+            self._panda_fn = self.string
+            self.string = str(self.string)
 
     def visit_column(self, column, add_to_result_map=None,
                                     include_table=True, **kwargs):

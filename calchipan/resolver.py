@@ -5,6 +5,7 @@
 from sqlalchemy.sql import operators
 from sqlalchemy import sql
 from sqlalchemy import util
+from sqlalchemy import types as sqltypes
 import functools
 import pandas as pd
 import numpy as np
@@ -13,6 +14,10 @@ from . import dbapi
 
 class Resolver(object):
     pass
+
+class NullResolver(Resolver):
+    def __call__(self, cursor, namespace, params):
+        pass
 
 class ColumnElementResolver(Resolver):
     def resolve_expression(self, cursor, product, namespace, params):
@@ -592,9 +597,10 @@ class DDLResolver(Resolver):
     pass
 
 class CreateTableResolver(DDLResolver):
-    def __init__(self, tablename, colnames, autoincrement_col, pandas_index_pk):
+    def __init__(self, tablename, colnames, coltypes, autoincrement_col, pandas_index_pk):
         self.tablename = tablename
         self.colnames = colnames
+        self.coltypes = coltypes
         self.autoincrement_col = autoincrement_col
         self.pandas_index_pk = pandas_index_pk
 
@@ -602,10 +608,21 @@ class CreateTableResolver(DDLResolver):
         if self.tablename in namespace:
             raise dbapi.Error("Dataframe '%s' already exists" % self.tablename)
 
-        namespace[self.tablename] = cursor.api.dataframe(
-            columns=[c for c in self.colnames
-                        if not self.pandas_index_pk
-                        or c != self.autoincrement_col])
+        # TODO: this is a hack for now
+        def get_type(type_):
+            if isinstance(type_, sqltypes.Integer):
+                return np.dtype('int64')
+            elif isinstance(type_, sqltypes.Float):
+                return np.dtype('float64')
+            else:
+                return np.dtype('object')
+
+        namespace[self.tablename] = pd.DataFrame.from_items([
+                (c, pd.Series(dtype=get_type(typ)))
+                for (c, typ) in zip(self.colnames, self.coltypes)
+                if not self.pandas_index_pk
+                        or c != self.autoincrement_col
+            ])
 
 class DropTableResolver(DDLResolver):
     def __init__(self, tablename):

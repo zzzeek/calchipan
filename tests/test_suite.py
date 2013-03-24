@@ -1,5 +1,6 @@
 from sqlalchemy.testing.suite.test_results import *
 from sqlalchemy.testing.suite.test_insert import *
+from sqlalchemy.testing.suite.test_reflection import *
 
 from sqlalchemy import event, Column
 

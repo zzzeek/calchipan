@@ -21,10 +21,8 @@ class Error(Exception):
 
 class Connection(object):
     def __init__(self, namespace=None, trace=False):
-        self._namespace = {}
+        self._namespace = namespace if namespace is not None else {}
         self.api = PandasAPI(log=trace)
-        if namespace:
-            self._namespace.update(namespace)
 
     @property
     def trace(self):
