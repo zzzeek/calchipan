@@ -12,6 +12,7 @@ from sqlalchemy import util
 from . import resolver
 import datetime
 import pandas as pd
+from . import operators as ca_operators
 
 class PandasDDLCompiler(compiler.DDLCompiler):
     def __init__(self, *arg, **kw):
@@ -132,6 +133,10 @@ class PandasCompiler(compiler.SQLCompiler):
         kw['override_op'] = operators.add
         return self.visit_binary(binary, **kw)
 
+    def visit_in_op_binary(self, binary, operator, **kw):
+        kw['override_op'] = ca_operators.in_op
+        return self.visit_binary(binary, **kw)
+
     def visit_is__binary(self, binary, operator, **kw):
         kw['override_op'] = operators.eq
         return self.visit_binary(binary, **kw)
@@ -221,15 +226,16 @@ class PandasCompiler(compiler.SQLCompiler):
     def visit_binary(self, binary, override_op=None, **kw):
         operator = override_op or binary.operator
 
-        disp = getattr(self, "visit_%s_binary" % operator.__name__, None)
-        if disp:
-            return disp(binary, operator, **kw)
-        else:
-            return resolver.BinaryResolver(
-                        binary.left._compiler_dispatch(self, **kw),
-                        binary.right._compiler_dispatch(self, **kw),
-                        operator
-                    )
+        if override_op is None:
+            disp = getattr(self, "visit_%s_binary" % operator.__name__, None)
+            if disp:
+                return disp(binary, operator, **kw)
+
+        return resolver.BinaryResolver(
+                    binary.left._compiler_dispatch(self, **kw),
+                    binary.right._compiler_dispatch(self, **kw),
+                    operator
+                )
 
 
     def bindparam_string(self, name, **kw):
@@ -343,6 +349,12 @@ class PandasCompiler(compiler.SQLCompiler):
             compound.order_by = cs._order_by_clause._compiler_dispatch(
                                 self, **kwargs
                                 )
+
+        # compounds have GROUP BY but not HAVING?  seems like a bug
+        #if cs._having is not None:
+        #    compound.having = cs._having._compiler_dispatch(
+        #                        self, **kwargs)
+
         compound.limit = cs._limit
         compound.offset = cs._offset
 

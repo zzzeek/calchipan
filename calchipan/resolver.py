@@ -401,6 +401,12 @@ class BaseSelectResolver(FromResolver):
                         for col, name in zip(self.columns, names)
                         ), inplace=True)
 
+        if self.offset is not None or self.limit is not None:
+            slice_start = self.offset if self.offset is not None else 0
+            if self.limit is None:
+                results = results[slice_start:]
+            else:
+                results = results[slice_start:slice_start + self.limit]
         return results
 
 class SelectResolver(BaseSelectResolver):

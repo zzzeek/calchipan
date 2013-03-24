@@ -225,6 +225,29 @@ class RoundTripTest(_ExecBase, TestBase):
         ])
         self._assert_no_cartesian(conn)
 
+    def test_select_explicit_join_to_select_1(self):
+        emp, dep, conn = self._emp_d_fixture()
+        deps = select([dep.c.name, dep.c.dep_id]).\
+            where(dep.c.dep_id.in_([1, 2])).alias()
+        stmt = select([emp.c.name, deps.c.name]).\
+                    select_from(emp.outerjoin(deps))
+        r = self._exec_stmt(conn, stmt)
+        eq_(
+            r.fetchall(),
+            [('ed', 'Engineering'), ('wendy', 'Engineering'), ('jack', 'Accounting')]
+        )
+
+    def test_select_explicit_join_to_select_2(self):
+        emp, dep, conn = self._emp_d_fixture()
+        deps = select([dep.c.name, dep.c.dep_id]).alias()
+        stmt = select([emp.c.name, deps.c.name]).\
+                    select_from(deps.outerjoin(emp))
+        r = self._exec_stmt(conn, stmt)
+        eq_(
+            r.fetchall(),
+            [('ed', 'Engineering'), ('wendy', 'Engineering'),
+                ('jack', 'Accounting'), (None, 'Sales')]
+        )
 
     def test_correlated_subquery_column(self):
         emp, dep, conn = self._emp_d_fixture()
@@ -363,6 +386,16 @@ class RoundTripTest(_ExecBase, TestBase):
             [('ed',), ('wendy',), ('jack',),
                 ('Engineering',), ('Accounting',), ('Sales',)])
 
+    def test_union_limit_offset(self):
+        emp, dep, conn = self._emp_d_fixture()
+
+        s1 = select([emp.c.name])
+        s2 = select([dep.c.name])
+        u1 = union_all(s1, s2).order_by(emp.c.name).limit(3).offset(2)
+        r = self._exec_stmt(conn, u1)
+        eq_(r.fetchall(),
+            [('Sales',), ('ed',), ('jack',)])
+
     def test_union_heterogeneous_types(self):
         emp, dep, conn = self._emp_d_fixture()
 
@@ -460,6 +493,42 @@ class RoundTripTest(_ExecBase, TestBase):
         eq_(
             r.fetchall(),
             [('wendy',), ('jack',), ('ed',)]
+        )
+
+    def test_order_by_limit(self):
+        emp, dep, conn = self._emp_d_fixture()
+        stmt = select([emp.c.name, dep.c.name]).\
+                    select_from(emp.join(dep)).\
+                    order_by(emp.c.name).\
+                    limit(2)
+        r = self._exec_stmt(conn, stmt)
+        eq_(
+            r.fetchall(),
+            [('ed', 'Engineering'), ('jack', 'Accounting')]
+        )
+
+    def test_order_by_offset(self):
+        emp, dep, conn = self._emp_d_fixture()
+        stmt = select([emp.c.name, dep.c.name]).\
+                    select_from(emp.join(dep)).\
+                    order_by(emp.c.name).\
+                    offset(1)
+        r = self._exec_stmt(conn, stmt)
+        eq_(
+            r.fetchall(),
+            [('jack', 'Accounting'), ('wendy', 'Engineering')]
+        )
+
+    def test_order_by_limit_offset(self):
+        emp, dep, conn = self._emp_d_fixture()
+        stmt = select([emp.c.name, dep.c.name]).\
+                    select_from(emp.join(dep)).\
+                    order_by(emp.c.name).\
+                    limit(1).offset(1)
+        r = self._exec_stmt(conn, stmt)
+        eq_(
+            r.fetchall(),
+            [('jack', 'Accounting')]
         )
 
     def test_group_by_max(self):
