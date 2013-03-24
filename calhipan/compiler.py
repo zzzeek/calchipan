@@ -351,3 +351,37 @@ class PandasCompiler(compiler.SQLCompiler):
             ins.values = [c[1] for c in colparams]
 
         return ins
+
+    def visit_update(self, update_stmt, **kw):
+        self.stack.append({'from': set([update_stmt.table])})
+
+        self.isupdate = True
+
+        extra_froms = update_stmt._extra_froms
+
+        colparams = self._get_colparams(update_stmt, extra_froms)
+
+        upd = resolver.UpdateResolver(update_stmt.table.name,
+                            update_stmt.table._autoincrement_column.name
+                            if update_stmt.table._autoincrement_column
+                            is not None else None)
+
+        upd.values = [
+            (
+                c[0].name,
+                c[1]
+            )  for c in colparams
+        ]
+
+        if update_stmt._returning:
+            raise NotImplementedError("soon...")
+
+        if extra_froms:
+            raise NotImplementedError("multiple UPDATE froms not implemented")
+
+        if update_stmt._whereclause is not None:
+            upd.whereclause = self.process(update_stmt._whereclause)
+
+        self.stack.pop(-1)
+
+        return upd

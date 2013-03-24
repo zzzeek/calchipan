@@ -71,7 +71,7 @@ class Cursor(object):
         """
         if isinstance(stmt, compat.basestring):
             raise Error("Only Pandas callable functions accepted for execute()")
-        self._result = self.description = self.lastrowid = None
+        self._result = self.description = self.lastrowid = self.rowcount = None
         result = stmt(self, self.namespace, params)
 
         if isinstance(result, pd.DataFrame):

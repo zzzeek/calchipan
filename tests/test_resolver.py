@@ -4,7 +4,7 @@ from calhipan import dbapi, base
 from . import eq_, assert_raises_message
 from sqlalchemy import Table, Column, Integer, union_all, \
         String, MetaData, select, and_, or_, ForeignKey, \
-        func, exc, schema
+        func, exc, schema, literal
 
 class _ExecBase(object):
     def _exec_stmt(self, conn, stmt):
@@ -238,6 +238,17 @@ class RoundTripTest(_ExecBase, TestBase):
             ('jack', 'Accounting')])
 
 
+    def test_correlated_subquery_bind(self):
+        emp, dep, conn = self._emp_d_fixture()
+
+        subq = select([literal("Engineering")]).\
+                    where(dep.c.dep_id == emp.c.dep_id).as_scalar()
+        stmt = select([emp.c.name, subq])
+        r = self._exec_stmt(conn, stmt)
+        eq_(r.fetchall(),
+            [('ed', 'Engineering'), ('wendy', 'Engineering'),
+            ('jack', 'Engineering')])
+
     def test_correlated_subquery_column_null(self):
         emp, dep, conn = self._emp_d_fixture()
 
@@ -260,7 +271,7 @@ class RoundTripTest(_ExecBase, TestBase):
         stmt = select([dep.c.name, subq])
         assert_raises_message(
             dbapi.Error,
-            "Subquery returned more than one row",
+            "scalar expression returned more than one row",
             self._exec_stmt, conn, stmt,
         )
 
@@ -524,6 +535,46 @@ class CrudTest(_ExecBase, TestBase):
                         trace=True)
         return emp, dep, conn
 
+    def _emp_data(self, conn, include_emp_id=True):
+        if include_emp_id:
+            conn._namespace['employee'] = conn._namespace['employee'].append(
+                    pd.DataFrame([
+                        {"emp_id": 1, "name": "ed", "fullname": "Ed Jones",
+                                "dep_id": 1},
+                        {"emp_id": 2, "name": "wendy", "fullname": "Wendy Wharton",
+                                "dep_id": 1},
+                        {"emp_id": 3, "name": "jack", "fullname": "Jack Smith",
+                                "dep_id": 2},
+                        ])
+                    )
+            conn._namespace['department'] = conn._namespace['department'].\
+                    append(
+                        pd.DataFrame([
+                            {"dep_id": 1, "name": "Engineering"},
+                            {"dep_id": 2, "name": "Accounting"},
+                            {"dep_id": 3, "name": "Sales"},
+                        ])
+                    )
+        else:
+            conn._namespace['employee'] = conn._namespace['employee'].append(
+                    pd.DataFrame([
+                        {"name": "ed", "fullname": "Ed Jones",
+                                "dep_id": 0},
+                        {"name": "wendy", "fullname": "Wendy Wharton",
+                                "dep_id": 0},
+                        {"name": "jack", "fullname": "Jack Smith",
+                                "dep_id": 1},
+                        ])
+                    )
+            conn._namespace['department'] = conn._namespace['department'].\
+                    append(
+                        pd.DataFrame([
+                            {"name": "Engineering"},
+                            {"name": "Accounting"},
+                            {"name": "Sales"},
+                        ])
+                    )
+
     def test_empty_select(self):
         emp, dep, conn = self._emp_d_fixture(True)
         stmt = select([emp])
@@ -532,17 +583,12 @@ class CrudTest(_ExecBase, TestBase):
 
     def test_autoincrement_select(self):
         emp, dep, conn = self._emp_d_fixture()
-        conn._namespace['employee'] = conn._namespace['employee'].append(
-                    pd.DataFrame([
-                        {"name": "e1", "fullname": "ef1", "dep_id": 1},
-                        {"name": "e2", "fullname": "ef2", "dep_id": 1},
-                        {"name": "e3", "fullname": "ef3", "dep_id": 1},
-                    ])
-                )
+        self._emp_data(conn, include_emp_id=False)
         stmt = select([emp])
         result = self._exec_stmt(conn, stmt)
         eq_(result.fetchall(),
-            [(0, 'e1', 'ef1', 1), (1, 'e2', 'ef2', 1), (2, 'e3', 'ef3', 1)])
+            [(0, 'ed', 'Ed Jones', 0), (1, 'wendy', 'Wendy Wharton', 0),
+            (2, 'jack', 'Jack Smith', 1)])
 
     def test_insert_autoincrement(self):
         emp, dep, conn = self._emp_d_fixture()
@@ -573,6 +619,49 @@ class CrudTest(_ExecBase, TestBase):
         eq_(result.fetchall(),
             [(0, 'e1', 'ef1', 2), (1, 'e2', 'ef2', 2)])
 
+    def test_simple_update(self):
+        emp, dep, conn = self._emp_d_fixture()
+        self._emp_data(conn, include_emp_id=True)
+        stmt = emp.update().values(fullname='new ef2').where(emp.c.emp_id == 2)
+        result = self._exec_stmt(conn, stmt)
+        eq_(result.rowcount, 1)
+
+        stmt = select([emp])
+        result = self._exec_stmt(conn, stmt)
+        eq_(result.fetchall(),
+            [(1, 'ed', 'Ed Jones', 1), (2, 'wendy', 'new ef2', 1),
+                (3, 'jack', 'Jack Smith', 2)])
+
+    def test_expression_update(self):
+        emp, dep, conn = self._emp_d_fixture()
+        self._emp_data(conn, include_emp_id=True)
+        stmt = emp.update().values(fullname=emp.c.name + " smith").\
+                    where(or_(emp.c.emp_id == 2, emp.c.emp_id == 3))
+        result = self._exec_stmt(conn, stmt)
+        eq_(result.rowcount, 2)
+
+        stmt = select([emp])
+        result = self._exec_stmt(conn, stmt)
+        eq_(result.fetchall(),
+            [(1, 'ed', 'Ed Jones', 1), (2, 'wendy', 'wendy smith', 1),
+            (3, 'jack', 'jack smith', 2)]
+            )
+
+    def test_correlated_subquery_update(self):
+        emp, dep, conn = self._emp_d_fixture()
+        self._emp_data(conn, include_emp_id=True)
+
+        subq = select([dep.c.name]).where(dep.c.dep_id == emp.c.dep_id).as_scalar()
+        stmt = emp.update().values(fullname="dep: " + subq).\
+                    where(or_(emp.c.emp_id == 2, emp.c.emp_id == 3))
+        result = self._exec_stmt(conn, stmt)
+        eq_(result.rowcount, 2)
+
+        stmt = select([emp])
+        result = self._exec_stmt(conn, stmt)
+        eq_(result.fetchall(),
+            [(1, 'ed', 'Ed Jones', 1), (2, 'wendy', 'dep: Engineering', 1),
+                (3, 'jack', 'dep: Accounting', 2)])
 
 class CreateDropTest(_ExecBase, TestBase):
     def _conn_fixture(self):

@@ -33,6 +33,9 @@ class Aggregate(object):
     def __init__(self, value):
         self.value = value
 
+    def reset_index(self, **kw):
+        return self
+
 class ColumnResolver(ColumnElementResolver):
     def __init__(self, name, tablename):
         self.name = name
@@ -296,7 +299,7 @@ class BaseSelectResolver(FromResolver):
             flatten results if present
             """
             cols = [c.resolve_expression(cursor, gprod, namespace,
-                                                    params)
+                                                    params).reset_index(drop=True)
                     for c in self.columns]
             for c in cols:
                 if isinstance(c, Aggregate):
@@ -382,13 +385,8 @@ class SelectResolver(BaseSelectResolver):
             df = DerivedResolver(row)
             thing = self._evaluate(cursor, namespace, params, correlate=df)
 
-            if len(thing) > 1:
-                raise dbapi.Error("Subquery returned more than one row")
-
-            # return as a simple list of scalar values.
-            # the None is for those rows which we had no value
-            things.append(thing[0] if thing else None)
-        return things
+            things.append(_coerce_to_scalar(cursor, thing))
+        return pd.Series(things)
 
     def _evaluate(self, cursor, namespace, params, correlate=None):
         if not self.dataframes:
@@ -412,9 +410,18 @@ class SelectResolver(BaseSelectResolver):
             col = self.columns[0].resolve_expression(
                             cursor,
                             product, namespace, params)
-            return cursor.api.reset_index(col, drop=True)
+            return _coerce_to_scalar(cursor, col)
+
         return product
 
+def _coerce_to_scalar(cursor, col):
+    if isinstance(col, pd.Series):
+        col = cursor.api.reset_index(col, drop=True)
+        if len(col) > 1:
+            raise dbapi.Error("scalar expression "
+                    "returned more than one row")
+        col = col[0] if col else None
+    return col
 
 class CompoundResolver(BaseSelectResolver):
     keyword = None
@@ -484,6 +491,42 @@ class InsertResolver(CRUDResolver):
                 ), ignore_index=True)
         namespace[self.tablename] = new
         cursor.lastrowid = new.index[-1]
+
+class UpdateResolver(CRUDResolver):
+    values = ()
+    whereclause = None
+
+    def __init__(self, tablename, autoincrement_col):
+        self.tablename = tablename
+        self.autoincrement_col = autoincrement_col
+
+    def __call__(self, cursor, namespace, params, **kw):
+        dataframe = namespace[self.tablename]
+        product = TableResolver(self.tablename,
+                        autoincrement_col=self.autoincrement_col)
+        df = product.resolve_dataframe(cursor, namespace, params)
+        if self.whereclause is not None:
+            df_ind = cursor.api.df_getitem(df,
+                            self.whereclause.resolve_expression(
+                                cursor,
+                                product, namespace, params))
+        else:
+            df_ind = df
+
+        # doing an UPDATE huh?  Yeah, this is quite slow, sorry.
+        for ind in cursor.api.df_index(df_ind):
+            product = DerivedResolver(
+                            cursor.api.df_ix_getitem(df_ind, slice(ind, ind)))
+
+            for k, v in self.values:
+                if k == self.autoincrement_col:
+                    raise dbapi.Error("Can't update the index column")
+
+                thing = v.resolve_expression(cursor, product, namespace, params)
+                thing = _coerce_to_scalar(cursor, thing)
+
+                dataframe[k][ind] = thing
+        cursor.rowcount = len(df_ind)
 
 class DDLResolver(Resolver):
     pass
