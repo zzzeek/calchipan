@@ -127,10 +127,10 @@ class PandasAPI(object):
             self._buf.append(("concat", dfs, df))
         return df
 
-    def rename(self, df, columns=None, inplace=False):
+    def rename(self, df, columns=None, inplace=False, copy=True):
         if self.log:
             self._buf.append(("rename", df, columns))
-        return df.rename(columns=columns, inplace=inplace)
+        return df.rename(columns=columns, inplace=inplace, copy=copy)
 
     def np_ones(self, length):
         if self.log:

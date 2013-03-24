@@ -632,6 +632,47 @@ class CrudTest(_ExecBase, TestBase):
             [(1, 'ed', 'Ed Jones', 1), (2, 'wendy', 'new ef2', 1),
                 (3, 'jack', 'Jack Smith', 2)])
 
+    def test_update_cache_clear(self):
+        """test SELECT on either side of an UPDATE.
+
+        TableResolver may (or may not, as we adjust implementations)
+        be using caching, so this tests
+        that it's reset appropriately.
+
+        """
+        emp, dep, conn = self._emp_d_fixture()
+        self._emp_data(conn, include_emp_id=True)
+        self._exec_stmt(conn, select([emp]))
+
+        self._exec_stmt(conn, emp.update().values(fullname='q'))
+
+
+        result2 = self._exec_stmt(conn, select([emp]))
+        eq_(result2.fetchall(),
+            [(1, 'ed', 'q', 1), (2, 'wendy', 'q', 1), (3, 'jack', 'q', 2)])
+
+    def test_insert_cache_clear(self):
+        """test SELECT on either side of an INSERT.
+
+        TableResolver may (or may not, as we adjust implementations)
+        be using caching, so this tests
+        that it's reset appropriately.
+
+        """
+
+        emp, dep, conn = self._emp_d_fixture()
+        self._emp_data(conn, include_emp_id=True)
+        self._exec_stmt(conn, select([emp]))
+
+        self._exec_stmt(conn, emp.insert().values(
+                            emp_id=4, name='wanda', fullname='q', dep_id=None))
+
+        result2 = self._exec_stmt(conn,
+                            select([emp.c.emp_id, emp.c.name, emp.c.dep_id]))
+        eq_(result2.fetchall(),
+            [(1, 'ed', 1), (2, 'wendy', 1),
+            (3, 'jack', 2), (4, 'wanda', None)])
+
     def test_expression_update(self):
         emp, dep, conn = self._emp_d_fixture()
         self._emp_data(conn, include_emp_id=True)

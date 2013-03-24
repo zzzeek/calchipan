@@ -98,19 +98,49 @@ class TableResolver(FromResolver):
         self.autoincrement_col = autoincrement_col
 
     def resolve_dataframe(self, cursor, namespace, params, names=True):
-        # TODO: some caching here might help, not sure how
-        # expensive it is to copy the cols from one dataframe
-        # into another
         df = namespace[self.tablename]
         if names:
-            cols = dict(
-                            ("%s_%s" % (self.tablename, k), df[k])
+            # performance tests show that the rename() here is
+            # not terribly expensive as long as copy=False.  Adding the
+            # index as a column is much more expensive, however,
+            # though is not as common of a use case.
+
+            # the renamed dataframe can be cached, though this means
+            # that all mutation operations need to clear the cache also.
+
+            # a quicker route to having the index accessible is to
+            # add an explicit copy of the index to the DataFrame outside
+            # of the SQL dialect - that way it won't be copied here
+            # each time.
+
+            renamed_df = cursor.api.rename(df,
+                        columns=dict(
+                            (k, "%s_%s" % (self.tablename, k))
                             for k in df.keys()
-                        )
+                        ), copy=False
+                    )
             if self.autoincrement_col and self.autoincrement_col not in df:
-                cols["%s_%s" %
+                renamed_df["%s_%s" %
                         (self.tablename, self.autoincrement_col)] = df.index
-            df = cursor.api.dataframe(cols)
+            return renamed_df
+        else:
+            return df
+
+class AliasResolver(FromResolver):
+    def __init__(self, table, aliasname):
+        self.table = table
+        self.aliasname = aliasname
+
+    def resolve_dataframe(self, cursor, namespace, params, names=True):
+        df = self.table.resolve_dataframe(
+                            cursor, namespace, params, names=False)
+        if names:
+            df = cursor.api.rename(df,
+                        columns=dict(
+                            (k, "%s_%s" % (self.aliasname, k))
+                            for k in df.keys()
+                        ), copy=False
+                    )
         return df
 
 class JoinResolver(FromResolver):
@@ -214,20 +244,6 @@ class JoinResolver(FromResolver):
         return df1
 
 
-class AliasResolver(FromResolver):
-    def __init__(self, table, aliasname):
-        self.table = table
-        self.aliasname = aliasname
-
-    def resolve_dataframe(self, cursor, namespace, params, names=True):
-        df = self.table.resolve_dataframe(cursor, namespace, params, names=False)
-        if names:
-            df = cursor.api.dataframe(
-                        dict(
-                            ("%s_%s" % (self.aliasname, k), df[k])
-                            for k in df.keys()
-                        ))
-        return df
 
 class BinaryResolver(ColumnElementResolver):
     def __init__(self, left, right, operator):
