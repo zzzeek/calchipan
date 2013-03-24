@@ -704,6 +704,32 @@ class CrudTest(_ExecBase, TestBase):
             [(1, 'ed', 'Ed Jones', 1), (2, 'wendy', 'dep: Engineering', 1),
                 (3, 'jack', 'dep: Accounting', 2)])
 
+    def test_simple_delete(self):
+        emp, dep, conn = self._emp_d_fixture()
+        self._emp_data(conn, include_emp_id=True)
+
+        stmt = emp.delete().where(emp.c.emp_id == 2)
+        result = self._exec_stmt(conn, stmt)
+        eq_(result.rowcount, 1)
+
+        stmt = select([emp])
+        result = self._exec_stmt(conn, stmt)
+        eq_(result.fetchall(),
+            [(1, 'ed', 'Ed Jones', 1),
+                (3, 'jack', 'Jack Smith', 2)])
+
+    def test_delete_all(self):
+        emp, dep, conn = self._emp_d_fixture()
+        self._emp_data(conn, include_emp_id=True)
+
+        stmt = emp.delete()
+        result = self._exec_stmt(conn, stmt)
+        eq_(result.rowcount, 3)
+
+        stmt = select([emp])
+        result = self._exec_stmt(conn, stmt)
+        eq_(result.fetchall(), [])
+
 class CreateDropTest(_ExecBase, TestBase):
     def _conn_fixture(self):
         conn = dbapi.connect(
@@ -722,6 +748,33 @@ class CreateDropTest(_ExecBase, TestBase):
         eq_(
             list(conn._namespace['test'].keys()),
             ['x', 'y']
+        )
+
+    def test_create_explicit_pk(self):
+        conn = self._conn_fixture()
+        m = MetaData()
+        t = Table('test', m,
+                Column('x', Integer, primary_key=True),
+                Column('y', Integer)
+            )
+        self._exec_stmt(conn, schema.CreateTable(t))
+        eq_(
+            list(conn._namespace['test'].keys()),
+            ['x', 'y']
+        )
+
+    def test_create_index_pk(self):
+        conn = self._conn_fixture()
+        m = MetaData()
+        t = Table('test', m,
+                Column('x', Integer, primary_key=True),
+                Column('y', Integer),
+                pandas_index_pk=True
+            )
+        self._exec_stmt(conn, schema.CreateTable(t))
+        eq_(
+            list(conn._namespace['test'].keys()),
+            ['y']
         )
 
     def test_drop(self):

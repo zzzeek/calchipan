@@ -1,3 +1,4 @@
+
 """Represent SQL tokens as Pandas operations.
 
 """
@@ -28,6 +29,13 @@ class FunctionResolver(ColumnElementResolver):
         if self.aggregate:
             q = Aggregate(q)
         return q
+
+class ConstantResolver(ColumnElementResolver):
+    def __init__(self, value):
+        self.value = value
+
+    def resolve_expression(self, cursor, product, namespace, params):
+        return pd.Series([self.value])
 
 class Aggregate(object):
     def __init__(self, value):
@@ -535,21 +543,47 @@ class UpdateResolver(CRUDResolver):
                 dataframe[k][ind] = thing
         cursor.rowcount = len(df_ind)
 
+class DeleteResolver(CRUDResolver):
+    whereclause = None
+
+    def __init__(self, tablename, autoincrement_col):
+        self.tablename = tablename
+        self.autoincrement_col = autoincrement_col
+
+    def __call__(self, cursor, namespace, params, **kw):
+        dataframe = namespace[self.tablename]
+        product = TableResolver(self.tablename,
+                        autoincrement_col=self.autoincrement_col)
+        df = product.resolve_dataframe(cursor, namespace, params)
+        if self.whereclause is not None:
+            df_ind = cursor.api.df_getitem(df,
+                            self.whereclause.resolve_expression(
+                                cursor,
+                                product, namespace, params))
+        else:
+            df_ind = df
+
+        namespace[self.tablename] = dataframe.drop(df_ind.index)
+        cursor.rowcount = len(df_ind)
+
 class DDLResolver(Resolver):
     pass
 
 class CreateTableResolver(DDLResolver):
-    def __init__(self, tablename, colnames, autoincrement_col):
+    def __init__(self, tablename, colnames, autoincrement_col, pandas_index_pk):
         self.tablename = tablename
         self.colnames = colnames
         self.autoincrement_col = autoincrement_col
+        self.pandas_index_pk = pandas_index_pk
 
     def __call__(self, cursor, namespace, params, **kw):
         if self.tablename in namespace:
             raise dbapi.Error("Dataframe '%s' already exists" % self.tablename)
 
         namespace[self.tablename] = cursor.api.dataframe(
-            columns=[c for c in self.colnames if c != self.autoincrement_col])
+            columns=[c for c in self.colnames
+                        if not self.pandas_index_pk
+                        or c != self.autoincrement_col])
 
 class DropTableResolver(DDLResolver):
     def __init__(self, tablename):

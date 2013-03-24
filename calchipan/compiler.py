@@ -24,7 +24,8 @@ class PandasDDLCompiler(compiler.DDLCompiler):
         return resolver.CreateTableResolver(table.name,
                     [c.name for c in table.c],
                     table._autoincrement_column.name
-                    if table._autoincrement_column is not None else None)
+                    if table._autoincrement_column is not None else None,
+                    table.kwargs.get('pandas_index_pk', False))
 
     def visit_drop_table(self, drop, **kw):
         table = drop.element
@@ -131,6 +132,14 @@ class PandasCompiler(compiler.SQLCompiler):
         kw['override_op'] = operators.add
         return self.visit_binary(binary, **kw)
 
+    def visit_is__binary(self, binary, operator, **kw):
+        kw['override_op'] = operators.eq
+        return self.visit_binary(binary, **kw)
+
+    def visit_isnot_binary(self, binary, operator, **kw):
+        kw['override_op'] = operators.ne
+        return self.visit_binary(binary, **kw)
+
     def _aggregate_on(self, func, fn, **kw):
         return resolver.FunctionResolver(
                     fn,
@@ -157,6 +166,15 @@ class PandasCompiler(compiler.SQLCompiler):
 
     def visit_min_func(self, func, **kw):
         return self._aggregate_on(func, min, **kw)
+
+    def visit_null(self, expr, **kw):
+        return resolver.ConstantResolver(None)
+
+    def visit_true(self, expr, **kw):
+        return resolver.ConstantResolver(True)
+
+    def visit_false(self, expr, **kw):
+        return resolver.ConstantResolver(False)
 
     def visit_clauselist(self, clauselist, **kwargs):
         return resolver.ClauseListResolver(
@@ -385,3 +403,24 @@ class PandasCompiler(compiler.SQLCompiler):
         self.stack.pop(-1)
 
         return upd
+
+    def visit_delete(self, delete_stmt, **kw):
+        self.stack.append({'from': set([delete_stmt.table])})
+        self.isdelete = True
+
+        del_ = resolver.DeleteResolver(delete_stmt.table.name,
+                            delete_stmt.table._autoincrement_column.name
+                            if delete_stmt.table._autoincrement_column
+                            is not None else None)
+
+        if delete_stmt._returning:
+            raise NotImplementedError("soon...")
+
+        if delete_stmt._whereclause is not None:
+            del_.whereclause = self.process(delete_stmt._whereclause)
+
+
+        self.stack.pop(-1)
+
+        return del_
+

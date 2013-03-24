@@ -21,6 +21,10 @@ class PandasDialect(default.DefaultDialect):
     ddl_compiler = PandasDDLCompiler
     execution_ctx_cls = PandasExecutionContext
 
+    # the first value we'd get for an autoincrement
+    # column.
+    default_sequence_base = 0
+
     def __init__(self, namespace=None, **kw):
         super(PandasDialect, self).__init__(**kw)
         self.namespace = namespace or {}
@@ -57,3 +61,4 @@ class PandasDialect(default.DefaultDialect):
         return table_name in self.namespace
 
 dialect = PandasDialect
+
