@@ -484,6 +484,36 @@ class RoundTripTest(_ExecBase, TestBase):
             [(2, 1), (1, 2)]
         )
 
+    def test_group_by_having_col(self):
+        emp, dep, conn = self._emp_d_fixture()
+
+        stmt = select([func.count(emp.c.name), emp.c.dep_id]).\
+                    group_by(emp.c.dep_id).having(emp.c.dep_id == 2)
+        r = self._exec_stmt(conn, stmt)
+        eq_(
+            r.fetchall(),
+            [(1, 2)]
+        )
+
+    def test_group_by_having_aggregate(self):
+        emp, dep, conn = self._emp_d_fixture()
+
+        stmt = select([func.count(emp.c.name), emp.c.dep_id]).\
+                    group_by(emp.c.dep_id).having(func.count(emp.c.name) > 1)
+        r = self._exec_stmt(conn, stmt)
+        eq_(
+            r.fetchall(),
+            [(2, 1)]
+        )
+
+    def test_having_group_by_assertion(self):
+        emp, dep, conn = self._emp_d_fixture()
+        stmt = select([emp.c.dep_id]).having(emp.c.dep_id == 2)
+        assert_raises_message(
+            dbapi.Error,
+            "HAVING must also have GROUP BY",
+            self._exec_stmt, conn, stmt
+        )
     def test_group_by_expression(self):
         emp, dep, conn = self._emp_d_fixture()
 

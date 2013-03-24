@@ -27,7 +27,7 @@ class FunctionResolver(ColumnElementResolver):
         q = self.fn(self.expr.resolve_expression(
                     cursor, product, namespace, params))
         if self.aggregate:
-            q = Aggregate(q)
+            q = pd.Series([q], name="aggregate")
         return q
 
 class ConstantResolver(ColumnElementResolver):
@@ -36,13 +36,6 @@ class ConstantResolver(ColumnElementResolver):
 
     def resolve_expression(self, cursor, product, namespace, params):
         return pd.Series([self.value])
-
-class Aggregate(object):
-    def __init__(self, value):
-        self.value = value
-
-    def reset_index(self, **kw):
-        return self
 
 class ColumnResolver(ColumnElementResolver):
     def __init__(self, name, tablename):
@@ -293,10 +286,22 @@ class JoinResolver(FromResolver):
         return df1
 
 
+class _HavingCol(ColumnElementResolver):
+    def __init__(self, expr):
+        self.expr = expr
+
+    def resolve_expression(self, cursor, product, namespace, params):
+        return self.expr.resolve_expression(
+                        cursor, product, namespace, params)
+
+    @property
+    def df_index(self):
+        return "_having"
 
 class BaseSelectResolver(FromResolver):
     group_by = None
     order_by = None
+    having = None
     limit = None
     offset = None
 
@@ -318,29 +323,37 @@ class BaseSelectResolver(FromResolver):
         else:
             groups = [product]
 
+        frame_columns = list(self.columns)
+        if self.having is not None:
+            if self.group_by is None:
+                raise dbapi.Error("HAVING must also have GROUP BY")
+            frame_columns.append(_HavingCol(self.having))
 
         def process_aggregates(gprod):
             """detect aggregate funcitons in column clauses and
             flatten results if present
             """
-            cols = [c.resolve_expression(cursor, gprod, namespace,
-                                                    params).reset_index(drop=True)
-                    for c in self.columns]
+            cols = [c.resolve_expression(cursor, gprod,
+                            namespace, params).reset_index(drop=True)
+                    for c in frame_columns]
+
+
             for c in cols:
-                if isinstance(c, Aggregate):
+                if c.name == 'aggregate':
                     break
             else:
                 return cols
 
             return [
                 list(c)[0]
-                    if not isinstance(c, Aggregate)
-                    else [c.value]
+                    if c.name != 'aggregate'
+                    else c
                 for c in cols
             ]
 
         nu = _unique_name()
         names = [nu(c.name) for c in self.columns]
+
 
         group_results = [
             cursor.api.df_from_items(
@@ -350,8 +363,9 @@ class BaseSelectResolver(FromResolver):
                             expr
                         )
                         for c, expr
-                            in zip(self.columns, process_aggregates(gprod))
-                    ])
+                            in zip(frame_columns, process_aggregates(gprod))
+                    ]
+            )
             for gprod in groups
         ]
         non_empty = [g for g in group_results if len(g)]
@@ -360,6 +374,10 @@ class BaseSelectResolver(FromResolver):
             return cursor.api.dataframe(columns=names)
         else:
             results = cursor.api.concat(non_empty)
+
+        if self.having is not None:
+            results = results[results['_having'] == True]
+            del results['_having']
 
         if self.order_by:
             cols = []

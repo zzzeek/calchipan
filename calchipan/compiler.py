@@ -309,6 +309,9 @@ class PandasCompiler(compiler.SQLCompiler):
                                         self, **kwargs)
             sel.order_by = order_by
 
+        if select._having is not None:
+            sel.having = select._having._compiler_dispatch(self, **kwargs)
+
         sel.limit = select._limit
         sel.offset = select._offset
 
