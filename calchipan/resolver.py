@@ -81,6 +81,47 @@ class LabelResolver(Resolver):
     def df_index(self):
         return self.name
 
+
+class BinaryResolver(ColumnElementResolver):
+    def __init__(self, left, right, operator):
+        self.left = left
+        self.right = right
+        self.operator = operator
+
+    def resolve_expression(self, cursor, product, namespace, params):
+        return self.operator(
+                    self.left.resolve_expression(
+                                            cursor, product, namespace, params),
+                    self.right.resolve_expression(
+                                            cursor, product, namespace, params),
+                )
+
+class ClauseListResolver(ColumnElementResolver):
+    def __init__(self, expressions, operator):
+        self.expressions = expressions
+        self.operator = operator
+
+    def resolve_expression(self, cursor, product, namespace, params):
+        exprs = [expr.resolve_expression(
+                                            cursor,
+                                            product, namespace, params)
+                        for expr in self.expressions]
+
+        if self.operator is operators.comma_op:
+            if len(exprs) == 1:
+                return exprs[0]
+            else:
+                return exprs
+        else:
+            return functools.reduce(self.operator, exprs)
+
+class BindParamResolver(ColumnElementResolver):
+    def __init__(self, name):
+        self.name = name
+
+    def resolve_expression(self, cursor, product, namespace, params):
+        return params[self.name]
+
 class FromResolver(Resolver):
     pass
 
@@ -245,46 +286,6 @@ class JoinResolver(FromResolver):
 
 
 
-class BinaryResolver(ColumnElementResolver):
-    def __init__(self, left, right, operator):
-        self.left = left
-        self.right = right
-        self.operator = operator
-
-    def resolve_expression(self, cursor, product, namespace, params):
-        return self.operator(
-                    self.left.resolve_expression(
-                                            cursor, product, namespace, params),
-                    self.right.resolve_expression(
-                                            cursor, product, namespace, params),
-                )
-
-class ClauseListResolver(ColumnElementResolver):
-    def __init__(self, expressions, operator):
-        self.expressions = expressions
-        self.operator = operator
-
-    def resolve_expression(self, cursor, product, namespace, params):
-        exprs = [expr.resolve_expression(
-                                            cursor,
-                                            product, namespace, params)
-                        for expr in self.expressions]
-
-        if self.operator is operators.comma_op:
-            if len(exprs) == 1:
-                return exprs[0]
-            else:
-                return exprs
-        else:
-            return functools.reduce(self.operator, exprs)
-
-class BindParamResolver(ColumnElementResolver):
-    def __init__(self, name):
-        self.name = name
-
-    def resolve_expression(self, cursor, product, namespace, params):
-        return params[self.name]
-
 class BaseSelectResolver(FromResolver):
     group_by = None
     order_by = None
@@ -330,7 +331,7 @@ class BaseSelectResolver(FromResolver):
                 for c in cols
             ]
 
-        nu = unique_name()
+        nu = _unique_name()
         names = [nu(c.name) for c in self.columns]
 
         group_results = [
@@ -347,6 +348,7 @@ class BaseSelectResolver(FromResolver):
         ]
         non_empty = [g for g in group_results if len(g)]
         if not non_empty:
+            # empty result
             return cursor.api.dataframe(columns=names)
         else:
             results = cursor.api.concat(non_empty)
@@ -430,14 +432,6 @@ class SelectResolver(BaseSelectResolver):
 
         return product
 
-def _coerce_to_scalar(cursor, col):
-    if isinstance(col, pd.Series):
-        col = cursor.api.reset_index(col, drop=True)
-        if len(col) > 1:
-            raise dbapi.Error("scalar expression "
-                    "returned more than one row")
-        col = col[0] if col else None
-    return col
 
 class CompoundResolver(BaseSelectResolver):
     keyword = None
@@ -570,7 +564,16 @@ class DropTableResolver(DDLResolver):
         del namespace[self.tablename]
 
 
-def unique_name():
+def _coerce_to_scalar(cursor, col):
+    if isinstance(col, pd.Series):
+        col = cursor.api.reset_index(col, drop=True)
+        if len(col) > 1:
+            raise dbapi.Error("scalar expression "
+                    "returned more than one row")
+        col = col[0] if col else None
+    return col
+
+def _unique_name():
     names = collections.defaultdict(int)
     def go(name):
         count = names[name]
