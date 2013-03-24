@@ -529,9 +529,6 @@ class UpdateResolver(CRUDResolver):
                             cursor.api.df_ix_getitem(df_ind, slice(ind, ind)))
 
             for k, v in self.values:
-                if k == self.autoincrement_col:
-                    raise dbapi.Error("Can't update the index column")
-
                 thing = v.resolve_expression(cursor, product, namespace, params)
                 thing = _coerce_to_scalar(cursor, thing)
 
