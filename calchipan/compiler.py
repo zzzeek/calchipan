@@ -396,7 +396,10 @@ class PandasCompiler(compiler.SQLCompiler):
         else:
             colparams_single = colparams
 
-        ins = resolver.InsertResolver(insert_stmt.table.name)
+        ins = resolver.InsertResolver(
+                    insert_stmt.table.name,
+                    insert_stmt.table.kwargs.get('pandas_index_pk', False)
+                )
 
         ins.columns = [c[0].name for c in colparams_single]
 

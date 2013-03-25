@@ -149,17 +149,13 @@ class BinaryResolver(ColumnElementResolver):
         self.operator = operator
 
     def resolve_expression(self, cursor, product, namespace, params):
-        try:
-            return self.operator(
-                        self.left.resolve_expression(
-                                                cursor, product, namespace, params),
-                        self.right.resolve_expression(
-                                                cursor, product, namespace, params),
-                    )
-        except:
-            raise
-#            import pdb
-#            pdb.set_trace()
+        return self.operator(
+                    self.left.resolve_expression(
+                                            cursor, product, namespace, params),
+                    self.right.resolve_expression(
+                                            cursor, product, namespace, params),
+                )
+
 class ClauseListResolver(ColumnElementResolver):
     def __init__(self, expressions, operator):
         self.expressions = expressions
@@ -228,6 +224,11 @@ class TableResolver(FromResolver):
                 renamed_df["%s_%s" %
                         (self.tablename, self.autoincrement_col)] = df.index
             return renamed_df
+        elif self.autoincrement_col and self.autoincrement_col not in df:
+            renamed_df = df.copy()
+            renamed_df[self.autoincrement_col] = df.index
+            return renamed_df
+
         else:
             return df
 
@@ -567,8 +568,9 @@ class InsertResolver(CRUDResolver):
     columns = ()
     values = ()
 
-    def __init__(self, tablename):
+    def __init__(self, tablename, pandas_index_pk):
         self.tablename = tablename
+        self.pandas_index_pk = pandas_index_pk
 
     def __call__(self, cursor, namespace, params, **kw):
         df = namespace[self.tablename]
@@ -594,8 +596,13 @@ class InsertResolver(CRUDResolver):
                     (c, v.resolve_expression(cursor, None, namespace, params))
                     for c, v in zip(self.columns, self.values)
                 ), ignore_index=True)
-        namespace[self.tablename] = new
-        cursor.lastrowid = new.index[-1]
+
+        # TODO: is 'value=[None]' correct usage here?
+        namespace[self.tablename] = new.fillna(value=[None])
+        if self.pandas_index_pk:
+            cursor.lastrowid = new.index[-1]
+        else:
+            cursor.lastrowid = None
 
 class UpdateResolver(CRUDResolver):
     values = ()

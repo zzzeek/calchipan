@@ -41,17 +41,19 @@ class DialectTest(TestBase):
 
         return {"employee": emp_df, "department": dept_df}
 
-    def _md_fixture(self):
+    def _md_fixture(self, pandas_index_pk=False):
         m = MetaData()
         emp = Table('employee', m,
                     Column('emp_id', Integer, primary_key=True),
                     Column('name', String),
                     Column('fullname', String),
-                    Column('dep_id', Integer, ForeignKey('department.dep_id'))
+                    Column('dep_id', Integer, ForeignKey('department.dep_id')),
+                    pandas_index_pk=pandas_index_pk
             )
         dep = Table('department', m,
                     Column('dep_id', Integer, primary_key=True),
                     Column('name', String),
+                    pandas_index_pk=pandas_index_pk
                     )
         return emp, dep
 
@@ -93,12 +95,23 @@ class DialectTest(TestBase):
         eng = create_engine("pandas+calchipan://",
                     namespace={"employee":
                             pd.DataFrame(columns=["name", "dep_id"])})
-        emp, dep = self._md_fixture()
+        emp, dep = self._md_fixture(pandas_index_pk=True)
         r = eng.execute(emp.insert().values(name="ed", dep_id=5))
         eq_(r.inserted_primary_key, [0])
 
         r = eng.execute(emp.insert().values(name="jack", dep_id=12))
         eq_(r.inserted_primary_key, [1])
+
+    def test_inserted_primary_key_no_autoinc(self):
+        eng = create_engine("pandas+calchipan://",
+                    namespace={"employee":
+                            pd.DataFrame(columns=["name", "dep_id"])})
+        emp, dep = self._md_fixture(pandas_index_pk=False)
+        r = eng.execute(emp.insert().values(name="ed", dep_id=5))
+        eq_(r.inserted_primary_key, [None])
+
+        r = eng.execute(emp.insert().values(name="jack", dep_id=12))
+        eq_(r.inserted_primary_key, [None])
 
     def test_inserted_primary_key_manualinc(self):
         eng = create_engine("pandas+calchipan://",
@@ -107,3 +120,6 @@ class DialectTest(TestBase):
         emp, dep = self._md_fixture()
         r = eng.execute(emp.insert().values(emp_id=3, name="ed", dep_id=5))
         eq_(r.inserted_primary_key, [3])
+
+
+

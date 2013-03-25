@@ -53,21 +53,36 @@ class RoundTripTest(_ExecBase, TestBase):
                     ])
         m = MetaData()
         emp = Table('employee', m,
-                    Column('emp_id', Integer, autoincrement=False,
-                                                    primary_key=True),
+                    Column('emp_id', Integer, primary_key=True),
                     Column('name', String),
                     Column('fullname', String),
                     Column('dep_id', Integer, ForeignKey('department.dep_id'))
             )
         dep = Table('department', m,
-                    Column('dep_id', Integer, autoincrement=False,
-                                                    primary_key=True),
+                    Column('dep_id', Integer, primary_key=True),
                     Column('name', String),
                     )
         conn = dbapi.connect(
                         {"employee": emp_df, "department": dept_df},
                         trace=True)
         return emp, dep, conn
+
+    def _autoinc_fixture(self):
+        dept_df = pd.DataFrame([
+                    {"name": "Engineering"},
+                    {"name": "Accounting"},
+                    {"name": "Sales"},
+                    ])
+        m = MetaData()
+        dep = Table('department', m,
+                    Column('dep_id', Integer, primary_key=True),
+                    Column('name', String),
+                    pandas_index_pk=True
+                    )
+        conn = dbapi.connect(
+                        {"department": dept_df},
+                        trace=True)
+        return dep, conn
 
     def test_select_single_table(self):
         emp, dep, conn = self._emp_d_fixture()
@@ -99,6 +114,17 @@ class RoundTripTest(_ExecBase, TestBase):
         eq_(
             r.fetchall(),
             [(2, 'Accounting'), (3, 'Sales')]
+        )
+
+    def test_select_single_alias_pandas_pk(self):
+        dep, conn = self._autoinc_fixture()
+        da = dep.alias()
+        r = self._exec_stmt(conn,
+                    select([da]).where(da.c.dep_id > 0)
+                )
+        eq_(
+            r.fetchall(),
+            [(1, 'Accounting'), (2, 'Sales')]
         )
 
     def test_select_implicit_join(self):
@@ -670,8 +696,8 @@ class RoundTripTest(_ExecBase, TestBase):
         )
 
 class CrudTest(_ExecBase, TestBase):
-    def _emp_d_fixture(self, autoincrement=True):
-        if autoincrement:
+    def _emp_d_fixture(self, pandas_index_pk=False):
+        if pandas_index_pk:
             emp_df = pd.DataFrame(columns=["name", "fullname", "dep_id"])
             dept_df = pd.DataFrame(columns=["name"])
         else:
@@ -679,16 +705,17 @@ class CrudTest(_ExecBase, TestBase):
             dept_df = pd.DataFrame(columns=["dep_id", "name"])
         m = MetaData()
         emp = Table('employee', m,
-                    Column('emp_id', Integer, autoincrement=autoincrement,
+                    Column('emp_id', Integer,
                                         primary_key=True),
                     Column('name', String),
                     Column('fullname', String),
-                    Column('dep_id', Integer, ForeignKey('department.dep_id'))
+                    Column('dep_id', Integer, ForeignKey('department.dep_id')),
+                    pandas_index_pk=pandas_index_pk
             )
         dep = Table('department', m,
-                    Column('dep_id', Integer, autoincrement=autoincrement,
-                                primary_key=True),
+                    Column('dep_id', Integer, primary_key=True),
                     Column('name', String),
+                    pandas_index_pk=pandas_index_pk
                     )
         conn = dbapi.connect(
                         {"employee": emp_df, "department": dept_df},
@@ -742,7 +769,7 @@ class CrudTest(_ExecBase, TestBase):
         eq_(result.fetchall(), [])
 
     def test_autoincrement_select(self):
-        emp, dep, conn = self._emp_d_fixture()
+        emp, dep, conn = self._emp_d_fixture(pandas_index_pk=True)
         self._emp_data(conn, include_emp_id=False)
         stmt = select([emp])
         result = self._exec_stmt(conn, stmt)
@@ -751,7 +778,7 @@ class CrudTest(_ExecBase, TestBase):
             (2, 'jack', 'Jack Smith', 1)])
 
     def test_insert_autoincrement(self):
-        emp, dep, conn = self._emp_d_fixture()
+        emp, dep, conn = self._emp_d_fixture(pandas_index_pk=True)
         stmt = emp.insert().values(name='e1', fullname='ef1', dep_id=2)
         result = self._exec_stmt(conn, stmt)
         eq_(result.lastrowid, 0)
@@ -765,8 +792,23 @@ class CrudTest(_ExecBase, TestBase):
         eq_(result.fetchall(),
             [(0, 'e1', 'ef1', 2), (1, 'e2', 'ef2', 2)])
 
+    def test_insert_no_autoincrement(self):
+        emp, dep, conn = self._emp_d_fixture(pandas_index_pk=False)
+        stmt = emp.insert().values(name='e1', fullname='ef1', dep_id=2)
+        result = self._exec_stmt(conn, stmt)
+        eq_(result.lastrowid, None)
+
+        stmt = emp.insert().values(name='e2', fullname='ef2', dep_id=2)
+        result = self._exec_stmt(conn, stmt)
+        eq_(result.lastrowid, None)
+
+        stmt = select([emp])
+        result = self._exec_stmt(conn, stmt)
+        eq_(result.fetchall(),
+            [(None, 'e1', 'ef1', 2), (None, 'e2', 'ef2', 2)])
+
     def test_insert_multiple_autoincrement(self):
-        emp, dep, conn = self._emp_d_fixture()
+        emp, dep, conn = self._emp_d_fixture(pandas_index_pk=True)
         stmt = emp.insert().values([
                     dict(name='e1', fullname='ef1', dep_id=2),
                     dict(name='e2', fullname='ef2', dep_id=2)
