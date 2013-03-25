@@ -153,6 +153,7 @@ What's Implemented
 ===================
 
 * ``select()``
+
   * WHERE criterion
   * column expressions, functions
   * implicit joins (where multiple tables are specified without using JOIN)
@@ -169,10 +170,11 @@ What's Implemented
   * HAVING, including comparison of aggregate function values
   * LIMIT, using ``select().limit()``
   * OFFSET, using ``select().offset()``
-    * UNION ALL, using ``union_all()``
-    * A few SQL functions are implemented so far, including ``count()``, ``max()``, ``min()``, and ``now()``
+  * UNION ALL, using ``union_all()``
+  * A few SQL functions are implemented so far, including ``count()``, ``max()``, ``min()``, and ``now()``
 
 * Table reflection
+
   * Only gets the names of columns, and at best only the "String", "Integer", "Float"
     types based on a dataframe.   There's no primary key, foreign key constraints,
     defaults, indexes or anything like that.  Primary and FK constraints would need
@@ -187,6 +189,7 @@ What's Implemented
   to dataframes using this functionality.
 
   * ``insert()``
+
     * Plain inserts
     * multi-valued inserts, i.e. ``table.insert().values([{"a": 1, "b": 2}, {"a": 3, "b": 4}])``
     * Note that inserts here must create a new dataframe for each statement invoked!
@@ -198,6 +201,7 @@ What's Implemented
       SQLAlchemy returns this value as result.inserted_primary_key().
 
   * ``update()``
+
     * Plain updates
     * Expression updates, i.e. set the value of a column to an expression
       possibly deriving from other columns in the row
@@ -207,11 +211,13 @@ What's Implemented
     * cursor.rowcount, number of rows matched.
 
   * ``delete()``
+
     * Plain deletes
     * Full WHERE criterion including correlated subqueries
     * cursor.rowcount, number of rows matched
 
 * ORM
+
   * The SQLAlchemy ORM builds entirely on top of the Core SQL constructs above, so
     it works fully.
 
