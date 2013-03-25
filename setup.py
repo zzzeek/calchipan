@@ -9,6 +9,15 @@ v.close()
 
 readme = os.path.join(os.path.dirname(__file__), 'README.rst')
 
+# Hack to prevent "TypeError: 'NoneType' object is not callable" error
+# in multiprocessing/util.py _exit_function when running `python
+# setup.py test` (see
+# http://www.eby-sarna.com/pipermail/peak/2010-May/003357.html)
+try:
+    import multiprocessing
+except ImportError:
+    pass
+
 
 setup(name='calchipan',
         version=VERSION,
@@ -29,10 +38,10 @@ setup(name='calchipan',
         author_email='mike@zzzcomputing.com',
         license='MIT',
         packages=['calchipan'],
-        install_requires=['pandas'],
+        install_requires=['sqlalchemy'],
         include_package_data=True,
-        tests_require=['nose >= 0.11'],
-        test_suite="nose.collector",
+        tests_require=['nose >= 1.2.1'],
+        test_suite="run_tests.setup_py_test", #sqlalchemy.testing.runner.setup_py_test",
         zip_safe=False,
         entry_points={
             'sqlalchemy.dialects': [

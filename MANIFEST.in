@@ -1,0 +1,6 @@
+recursive-include tests *.py *.dat
+
+include README* LICENSE
+
+
+
