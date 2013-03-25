@@ -38,10 +38,10 @@ setup(name='calchipan',
         author_email='mike@zzzcomputing.com',
         license='MIT',
         packages=['calchipan'],
-        install_requires=['sqlalchemy'],
+        install_requires=['pandas', 'sqlalchemy'],
         include_package_data=True,
-        tests_require=['nose >= 1.2.1'],
-        test_suite="run_tests.setup_py_test", #sqlalchemy.testing.runner.setup_py_test",
+        tests_require=['nose >= 1.2.1', 'coverage'],
+        test_suite="run_tests.setup_py_test",
         zip_safe=False,
         entry_points={
             'sqlalchemy.dialects': [
