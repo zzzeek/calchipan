@@ -111,7 +111,7 @@ class ColumnResolver(ColumnElementResolver):
 
     @property
     def df_index(self):
-        return "%s_%s" % (self.tablename, self.name)
+        return "#T_%s_#C_%s" % (self.tablename, self.name)
 
 class UnaryResolver(ColumnElementResolver):
     def __init__(self, expression, operator, modifier):
@@ -216,12 +216,12 @@ class TableResolver(FromResolver):
 
             renamed_df = cursor.api.rename(df,
                         columns=dict(
-                            (k, "%s_%s" % (self.tablename, k))
+                            (k, "#T_%s_#C_%s" % (self.tablename, k))
                             for k in df.keys()
                         ), copy=False
                     )
             if self.autoincrement_col and self.autoincrement_col not in df:
-                renamed_df["%s_%s" %
+                renamed_df["#T_%s_#C_%s" %
                         (self.tablename, self.autoincrement_col)] = df.index
             return renamed_df
         elif self.autoincrement_col and self.autoincrement_col not in df:
@@ -243,7 +243,7 @@ class AliasResolver(FromResolver):
         if names:
             df = cursor.api.rename(df,
                         columns=dict(
-                            (k, "%s_%s" % (self.aliasname, k))
+                            (k, "#T_%s_#C_%s" % (self.aliasname, k))
                             for k in df.keys()
                         ), copy=False
                     )
