@@ -11,6 +11,59 @@ import pandas as pd
 import numpy as np
 import collections
 from . import dbapi
+from sqlalchemy.sql.functions import GenericFunction
+from sqlalchemy.ext.compiler import compiles
+
+
+def aggregate_fn(package=None):
+    """Mark a Python function as a SQL aggregate function.
+
+    The function should receive a Pandas Series object
+    as an argument and return a scalar result.
+
+    E.g.::
+
+        from calchipan import aggregate_fn
+
+        @aggregate_fn()
+        def stddev(values):
+            return values.std()
+
+    The object is converted into a SQLAlchemy GenericFunction
+    object, which can be used directly::
+
+        stmt = select([stddev(table.c.value)])
+
+    or via the SQLAlchemy ``func`` namespace::
+
+        from sqlalchemy import func
+        stmt = select([func.stddev(table.c.value)])
+
+    Functions can be placed in ``func`` under particular
+    "package" names using the ``package`` argument::
+
+        @aggregate_fn(package='numpy')
+        def stddev(values):
+            return values.std()
+
+    Usage via ``func`` is then::
+
+        from sqlalchemy import func
+        stmt = select([func.numpy.stddev(table.c.value)])
+
+    """
+    def mark_aggregate(fn):
+        kwargs = {'name': fn.__name__}
+        if package:
+            kwargs['package'] = package
+        custom_func = type("%sFunc" % fn.__name__, (GenericFunction,), kwargs)
+
+        @compiles(custom_func, 'pandas')
+        def _compile_fn(expr, compiler, **kw):
+            return FunctionResolver(fn,
+                    compiler.process(expr.clauses, **kw), True)
+        return custom_func
+    return mark_aggregate
 
 class Resolver(object):
     pass

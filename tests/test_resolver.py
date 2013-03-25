@@ -1,10 +1,11 @@
 from sqlalchemy.testing.fixtures import TestBase
 import pandas as pd
+import numpy as np
 from calchipan import dbapi, base
 from . import eq_, assert_raises_message
 from sqlalchemy import Table, Column, Integer, union_all, \
         String, MetaData, select, and_, or_, ForeignKey, \
-        func, exc, schema, literal
+        func, exc, schema, literal, Float
 
 class _ExecBase(object):
     def _exec_stmt(self, conn, stmt):
@@ -15,7 +16,25 @@ class _ExecBase(object):
         return curs
 
 
+
 class RoundTripTest(_ExecBase, TestBase):
+
+    def _numbers_fixture(self):
+        numbers = pd.DataFrame(np.array(((0.01, 0.01, 0.02, 0.04, 0.03),
+              (0.00, 0.02, 0.02, 0.03, 0.02),
+              (0.01, 0.02, 0.02, 0.03, 0.02),
+              (0.01, 0.00, 0.01, 0.05, 0.03))),
+                columns=['a', 'b', 'c', 'd', 'e'])
+
+        m = MetaData()
+        n_t = Table('numbers', m,
+                Column('a', Float), Column('b', Float),
+                Column('c', Float), Column('d', Float),
+                Column('e', Float))
+
+        conn = dbapi.connect(
+                        {"numbers": numbers})
+        return n_t, conn
 
     def _emp_d_fixture(self):
         emp_df = pd.DataFrame([
@@ -415,6 +434,38 @@ class RoundTripTest(_ExecBase, TestBase):
         eq_(
             r.fetchall(),
             [(3, )]
+        )
+
+    def test_custom_function(self):
+        n_t, conn = self._numbers_fixture()
+
+        from calchipan import aggregate_fn
+        @aggregate_fn()
+        def stddev(values):
+            return values.std()
+
+        stmt = select([func.stddev(n_t.c.c),
+                        func.stddev(n_t.c.d).label('d')])
+        r = self._exec_stmt(conn, stmt)
+        eq_(
+            r.fetchall(),
+            [(0.005000000000000014, 0.0095742710775633677)]
+        )
+
+    def test_custom_function_namespace(self):
+        n_t, conn = self._numbers_fixture()
+
+        from calchipan import aggregate_fn
+        @aggregate_fn(package='numpy')
+        def stddev(values):
+            return values.std()
+
+        stmt = select([func.numpy.stddev(n_t.c.c),
+                        func.numpy.stddev(n_t.c.d).label('d')])
+        r = self._exec_stmt(conn, stmt)
+        eq_(
+            r.fetchall(),
+            [(0.005000000000000014, 0.0095742710775633677)]
         )
 
     def test_unimpl_function(self):

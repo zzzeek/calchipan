@@ -53,6 +53,26 @@ would have to be established manually)::
 	df1 = Table('df1', m, autoload=True, autoload_with=engine)
 	df2 = Table('df1', m, autoload=True, autoload_with=engine)
 
+Add Any Python Function
+=======================
+
+Since we're totally in Python now, you can make any kind of Python function
+into a SQL function, most handily the various numpy functions::
+
+    from calchipan import aggregate_fn
+    @aggregate_fn(package='numpy')
+    def stddev(values):
+        return values.std()
+
+Above, ``stddev`` is now a SQLAlchemy aggregate function::
+
+	result = engine.execute(select([stddev(mytable.c.data)]))
+
+And it is also available from the ``func`` namespace (note we
+also put it into a sub-"package" called ``numpy``::
+
+	from sqlalchemy import func
+	result = engine.execute(select([func.numpy.stddev(mytable.c.data)]))
 
 Great, so Pandas is totally SQL-capable now right?
 ==================================================
@@ -120,9 +140,83 @@ feature, which involves making copies of the DataFrame's index into a column.
 What's Implemented
 ===================
 
-TODO
+* ``select()``
+	* WHERE criterion
+	* column expressions, functions
+	* implicit joins (where multiple tables are specified without using JOIN)
+	* explicit joins (i.e. using join()), on simple criteria (fast) and custom criteria (slower)
+	* explicit outerjoins (using outerjoin()), on simple criteria (sort of fast)
+	  and custom criteria (slower)
+	* subqueries in the FROM clause
+	* subqueries in the columns and WHERE clause which can be correlated; note that column/where
+	  queries are not very performant however as they invoke explicitly for every row in the
+	  parent result
+	* ORDER BY
+	* GROUP BY
+	* aggregate functions, including custom user-defined aggregate functions
+	* HAVING, including comparison of aggregate function values
+	* LIMIT, using ``select().limit()``
+	* OFFSET, using ``select().offset()``
+    * UNION ALL, using ``union_all()``
+    * A few SQL functions are implemented so far, including ``count()``, ``max()``, ``min()``, and ``now()``
+
+* Table reflection
+	* Only gets the names of columns, and at best only the "String", "Integer", "Float"
+	  types based on a dataframe.   There's no primary key, foreign key constraints,
+	  defaults, indexes or anything like that.  Primary and FK constraints would need
+	  to be specified to the ``Table()`` explicitly if one is using the ORM and
+	  wishes these constructs to be present.
+
+* CRUD operations - Note that Pandas **is not** optimized for modifications of dataframes,
+  and dataframes should normally be populated ahead of time using normal Pandas APIs,
+  unless SQL-specific or ORM-specific functionality is needed.
+  CRUD operations here work correctly but are not by any means fast, nor is there any
+  notion of thread safety or anything like that.   ORM models can be fully persisted
+  to dataframes using this functionality.
+
+	* ``insert()``
+		* Plain inserts
+		* multi-valued inserts, i.e. ``table.insert().values([{"a": 1, "b": 2}, {"a": 3, "b": 4}])``
+		* Note that inserts here must create a new dataframe for each statement invoked!
+		  Generally, dataframes should be populated using Pandas standard methods; INSERT here
+		  is only a utility
+		* cursor.lastrowid - if the table is set up to use the Pandas "index" as the primary key,
+		  this value will function.   The library is less efficient when used in this mode,
+		  however, as it needs to copy the index column every time the table is accessed.
+		  SQLAlchemy returns this value as result.inserted_primary_key().
+
+	* ``update()``
+		* Plain updates
+		* Expression updates, i.e. set the value of a column to an expression
+		  possibly deriving from other columns in the row
+		* Correlated subquery updates, i.e. set the value of a column to
+		  the result of a correlated subquery
+		* Full WHERE criterion including correlated subqueries
+		* cursor.rowcount, number of rows matched.
+
+	* ``delete()``
+		* Plain deletes
+		* Full WHERE criterion including correlated subqueries
+		* cursor.rowcount, number of rows matched
+
+* ORM
+	* The SQLAlchemy ORM builds entirely on top of the Core SQL constructs above, so
+	  it works fully.
 
 What's Egregiously Missing
 ===========================
 
-TODO
+* Other set ops besides UNION ALL - UNION, EXCEPT, INTERSECTION, etc., these should
+  be easy to implement
+* RETURNING for insert, update, delete, also should be straightforward to implement
+* Lots of obvious functions are missing, only a few are present so far
+* Coercion/testing of Python date and time values.  Pandas seems to use an internal
+  Timestamp format, so SQLAlchemy types that coerce to/from Python datetime() objects
+  and such need to be added.
+
+* **ANY KIND OF INPUT SANITIZING** - I've no idea if Pandas and/or numpy have any kind
+  of remote code execution vulnerabilities, but if they do, **they are here as well**.
+  **This library has no security features of any kind, please do not send untrusted
+  data into it**.
+
+Thanks, and have a nice day!
