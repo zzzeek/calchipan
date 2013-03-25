@@ -231,6 +231,9 @@ What's Egregiously Missing
 * Coercion/testing of Python date and time values.  Pandas seems to use an internal
   Timestamp format, so SQLAlchemy types that coerce to/from Python datetime() objects
   and such need to be added.
+* EXISTS, needs to be evaluated
+* CASE statements (should be very easy)
+* anything fancy, window functions, CTEs, etc.
 
 * **ANY KIND OF INPUT SANITIZING** - I've no idea if Pandas and/or numpy have any kind
   of remote code execution vulnerabilities, but if they do, **they are here as well**.

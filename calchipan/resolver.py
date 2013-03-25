@@ -94,7 +94,7 @@ class ConstantResolver(ColumnElementResolver):
         self.value = value
 
     def resolve_expression(self, cursor, product, namespace, params):
-        return pd.Series([self.value])
+        return self.value
 
 class ColumnResolver(ColumnElementResolver):
     def __init__(self, name, tablename):
@@ -149,13 +149,17 @@ class BinaryResolver(ColumnElementResolver):
         self.operator = operator
 
     def resolve_expression(self, cursor, product, namespace, params):
-        return self.operator(
-                    self.left.resolve_expression(
-                                            cursor, product, namespace, params),
-                    self.right.resolve_expression(
-                                            cursor, product, namespace, params),
-                )
-
+        try:
+            return self.operator(
+                        self.left.resolve_expression(
+                                                cursor, product, namespace, params),
+                        self.right.resolve_expression(
+                                                cursor, product, namespace, params),
+                    )
+        except:
+            raise
+#            import pdb
+#            pdb.set_trace()
 class ClauseListResolver(ColumnElementResolver):
     def __init__(self, expressions, operator):
         self.expressions = expressions

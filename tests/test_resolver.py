@@ -79,6 +79,16 @@ class RoundTripTest(_ExecBase, TestBase):
             [(2, 'Accounting'), (3, 'Sales')]
         )
 
+    def test_select_compare_none(self):
+        emp, dep, conn = self._emp_d_fixture()
+        r = self._exec_stmt(conn,
+                    select([dep.c.name]).select_from(dep.outerjoin(emp)).\
+                        where(emp.c.emp_id == None)
+                )
+        eq_(
+            r.fetchall(),
+            [('Sales', )]
+        )
 
     def test_select_single_alias(self):
         emp, dep, conn = self._emp_d_fixture()

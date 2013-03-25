@@ -163,11 +163,11 @@ class PandasCompiler(compiler.SQLCompiler):
         return self.visit_binary(binary, **kw)
 
     def visit_is__binary(self, binary, operator, **kw):
-        kw['override_op'] = operators.eq
+        kw['override_op'] = ca_operators.is_op
         return self.visit_binary(binary, **kw)
 
     def visit_isnot_binary(self, binary, operator, **kw):
-        kw['override_op'] = operators.ne
+        kw['override_op'] = ca_operators.isnot_op
         return self.visit_binary(binary, **kw)
 
     def _aggregate_on(self, func, fn, **kw):
