@@ -115,11 +115,23 @@ all your dataframes out to the database for each table (which might not be a pro
 pandasql also doesn't provide easy hooks for usage with packages like SQLAlchemy, though the whole
 thing is only 50 lines so hacking its approach might be worth it.
 
+OK, will it at least return the right results to me?
+======================================================
+
+So far so good, but I've only done very rudimentary testing.  If you look at
+`sqlite's changelog <http://www.sqlite.org/releaselog/3_7_16.html>`_ you can see they
+are still fixing "I got the wrong answer" types of bugs after **nine years of
+development**, which represents 46800% of Calchipan's development time
+of exactly one week (as of March 25, 2013), so I cannot stress enough, **Calchipan is
+way too new to be trusted with anything at all.**  Feel free to use the bugtracker
+here to report on early usage experiences and issues, the latter should absolutely
+be expected.
+
 Performance Notes
 ==================
 
 The SQL operations are all implemented in the simplest way possible, with an emphasis
-on returning the correct answer for any query given.  Two common SQL operations,
+on relying upon Pandas in the simplest way possible for any query given.  Two common SQL operations,
 implicit joins and correlated subqueries, work fully, but are not optimized at all -
 an implicit join (that is, selecting from more than one table without using ``join()``)
 relies internally on producing a `cartesian product <http://en.wikipedia.org/wiki/Cartesian_product>`_,
