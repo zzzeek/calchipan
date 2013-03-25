@@ -103,13 +103,26 @@ on returning the correct answer for any query given.  Two common SQL operations,
 implicit joins and correlated subqueries, work fully, but are not optimized at all -
 an implicit join (that is, selecting from more than one table without using ``join()``)
 relies internally on producing a `cartesian product <http://en.wikipedia.org/wiki/Cartesian_product>`_,
-which you aren't going to like for large datasets.   Correlated subqueries involve
-running the correlated query individually on every row, so these will also make
-the speed-hungry user sad.   A join using ``join()`` or ``outerjoin()`` will internally
-try to make use of Pandas' ``merge()`` function directly, but this only takes effect
-for simple criteria - if you try to join on a condition like "x > y", you'll be back in
+which you aren't going to like for large (or even a few thousand rows) datasets.
+Correlated subqueries involve
+running the subquery individually on every row, so these will also make
+the speed-hungry user sad (but the "holy crap correlated subqueries are possible with Pandas?"
+user should be really happy!).   A join using ``join()`` or ``outerjoin()`` will internally
+make use of Pandas' ``merge()`` function directly for simple criteria, so if you
+stay within the lines, you should get pretty good Pandas-like performance, but if you
+try non-simple criteria like joinining on "x > y", you'll be back in
 cartesian land.
 
 The libary also does a little bit of restatement of dataframes internally which has a
 modest performance hit, which is more significant if one is using the "index as primary key"
 feature, which involves making copies of the DataFrame's index into a column.
+
+What's Implemented
+===================
+
+TODO
+
+What's Egregiously Missing
+===========================
+
+TODO
