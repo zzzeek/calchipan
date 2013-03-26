@@ -13,15 +13,32 @@ from . import resolver
 import datetime
 import pandas as pd
 from . import operators as ca_operators
+from sqlalchemy.engine import default
 
-class PandasDDLCompiler(compiler.DDLCompiler):
+_default_dialect = default.DefaultDialect()
+
+class PandasCompiler(object):
     statement = None
 
     def __init__(self, *arg, **kw):
-        super(PandasDDLCompiler, self).__init__(*arg, **kw)
+        super(PandasCompiler, self).__init__(*arg, **kw)
         if self.statement is not None:
             self._panda_fn = self.string
             self.string = str(self.string)
+
+class ShowStringStatement(object):
+    """applied to the ExecutionContext before execution so that
+    logging can return the SQL-compiled string."""
+
+    def __init__(self, compiled):
+        self.compiled = compiled
+
+    def __str__(self):
+        return "[SQL translated from Pandas command] %s" % (
+            self.compiled.statement.compile(dialect=_default_dialect),
+        )
+
+class PandasDDLCompiler(PandasCompiler, compiler.DDLCompiler):
 
     def visit_create_table(self, create, **kw):
         table = create.element
@@ -54,14 +71,7 @@ class PandasDDLCompiler(compiler.DDLCompiler):
     def visit_drop_constraint(self, ind, **kw):
         return resolver.NullResolver()
 
-class PandasCompiler(compiler.SQLCompiler):
-    statement = None
-
-    def __init__(self, *arg, **kw):
-        super(PandasCompiler, self).__init__(*arg, **kw)
-        if self.statement is not None:
-            self._panda_fn = self.string
-            self.string = str(self.string)
+class PandasSQLCompiler(PandasCompiler, compiler.SQLCompiler):
 
     def visit_column(self, column, add_to_result_map=None,
                                     include_table=True, **kwargs):

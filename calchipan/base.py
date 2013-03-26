@@ -1,6 +1,6 @@
 from sqlalchemy.engine import default
 from sqlalchemy import exc, __version__, types as sqltypes
-from .compiler import PandasCompiler, PandasDDLCompiler
+from .compiler import PandasSQLCompiler, PandasDDLCompiler, ShowStringStatement
 from . import dbapi
 import warnings
 import numpy as np
@@ -13,12 +13,15 @@ class PandasExecutionContext(default.DefaultExecutionContext):
                     "with SQLAlchemy version < 0.8.1")
         return lrd
 
+    def pre_exec(self):
+        # logging will illustrate this
+        self.statement = ShowStringStatement(self.compiled)
 
 class PandasDialect(default.DefaultDialect):
     name = "pandas"
     driver = "calchipan"
 
-    statement_compiler = PandasCompiler
+    statement_compiler = PandasSQLCompiler
     ddl_compiler = PandasDDLCompiler
     execution_ctx_cls = PandasExecutionContext
 
