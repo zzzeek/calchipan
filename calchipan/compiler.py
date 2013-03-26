@@ -38,6 +38,9 @@ class ShowStringStatement(object):
             self.compiled.statement.compile(dialect=_default_dialect),
         )
 
+    def __repr__(self):
+        return str(self)
+
 class PandasDDLCompiler(PandasCompiler, compiler.DDLCompiler):
 
     def visit_create_table(self, create, **kw):
