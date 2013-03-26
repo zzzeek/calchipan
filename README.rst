@@ -107,12 +107,14 @@ Great, so Pandas is totally SQL-capable now right?
 Well let's just slow down there.   The library here is actually
 working quite nicely, and yes, you can do a pretty decent range of SQL operations
 here, noting the caveats that **this is super duper alpha stuff I just started a week ago**.
-Many of the SQL operations that we take for granted will **perform pretty badly**
-(guide is below), so at the moment it's not entirely clear how useful this approach
-will really be - I have comprehensive tests for all the SQL operations implemented,
+Some SQL operations that we normally take for granted will **perform pretty badly**
+(guide is below), so at the moment it's not entirely clear how much speed will be
+an issue.  There are comprehensive tests for all the SQL operations implemented,
 but these are only rudimentary "does it work at all" tests - dealing
 with at most about six rows and just two tables.   I've run some more real world ORM
-types of scripts and the performance is a little slow, but then again Pandas is not oriented
+types of scripts, and while the results are encouraging, handling SQLAlchemy's
+rather complex eager loading queries very nicely, the performance of some
+operations (particularly data mutations) are a little slow, but then again Pandas is not oriented
 towards manipulation of DataFrames in a CRUD-style way so for straight up SELECTs
 it may be quite useful for some people.
 
@@ -157,8 +159,9 @@ be expected.
 Performance Notes
 ==================
 
-The SQL operations are all implemented in the simplest way possible, with an emphasis
-on relying upon Pandas in the simplest way possible for any query given.  Two common SQL operations,
+The SQL operations are all implemented with an emphasis
+on relying upon Pandas in the simplest and most idiomatic way possible for any
+query given.  Two common SQL operations,
 implicit joins and correlated subqueries, work fully, but are not optimized at all -
 an implicit join (that is, selecting from more than one table without using ``join()``)
 relies internally on producing a `cartesian product <http://en.wikipedia.org/wiki/Cartesian_product>`_,
