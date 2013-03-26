@@ -6,7 +6,7 @@ What is it?
 ===========
 
 A `SQLAlchemy <http://www.sqlalchemy.org/>`_ dialect which will
-consider a series of `Pandas <pandas.pydata.org/>`_ DataFrame objects
+consider a series of `Pandas <http://pandas.pydata.org/>`_ DataFrame objects
 as relational database tables, allowing them to be queried and manipulated
 in all the usual SQLAlchemy ways.
 
