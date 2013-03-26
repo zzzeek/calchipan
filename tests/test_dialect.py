@@ -80,12 +80,12 @@ class DialectTest(TestBase):
                     namespace=self._emp_d_fixture())
         emp, dep = self._md_fixture()
 
-        from sqlalchemy.sql.functions import GenericFunction
-        class MyFunc(GenericFunction):
-            name = 'myfunc'
-            def pandas_fn(self):
-                return pd.Series(["hi"])
-        result = eng.execute(func.myfunc())
+        from calchipan import non_aggregate_fn
+
+        @non_aggregate_fn()
+        def myfunc():
+            return "hi"
+        result = eng.execute(myfunc())
         eq_(
             list(result),
             [('hi',)]

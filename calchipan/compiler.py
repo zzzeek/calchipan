@@ -128,12 +128,6 @@ class PandasSQLCompiler(PandasCompiler, compiler.SQLCompiler):
         disp = getattr(self, "visit_%s_func" % func.name.lower(), None)
         if disp:
             return disp(func, **kwargs)
-        elif hasattr(func, "pandas_fn"):
-            if getattr(func, "pandas_aggregate", False):
-                return self._aggregate_on(func, func.pandas_fn, **kwargs)
-            else:
-                return self._scalar_fn_on(func, func.pandas_fn, **kwargs)
-
         else:
             raise exc.CompileError(
                     "Pandas dialect has no '%s()' function implemented" %

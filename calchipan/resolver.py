@@ -634,13 +634,9 @@ class InsertResolver(CRUDResolver):
 
     def __call__(self, cursor, namespace, params, **kw):
         df = namespace[self.tablename]
-        # TODO: add append() to api
         if not self.values:
             new = df.append({}, ignore_index=True)
         elif isinstance(self.values[0], list):
-            # TODO: not sure what ignore_index actually means,
-            # or if there are performance enhancements that can be
-            # made here
             new = df.append(
                 cursor.api.dataframe(
                     [
