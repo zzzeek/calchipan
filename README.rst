@@ -217,7 +217,8 @@ What's Implemented
 
 * CRUD operations - Note that Pandas **is not** optimized for modifications of dataframes,
   and dataframes should normally be populated ahead of time using normal Pandas APIs,
-  unless SQL-specific or ORM-specific functionality is needed.
+  unless SQL-specific or ORM-specific functionality is needed in order to produce
+  initial schemas and/or populate data.
   CRUD operations here work correctly but are not by any means fast, nor is there any
   notion of thread safety or anything like that.   ORM models can be fully persisted
   to dataframes using this functionality.
