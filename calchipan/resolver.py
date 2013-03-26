@@ -142,7 +142,7 @@ class LiteralResolver(ColumnElementResolver):
         self.name = str(id(self))
 
     def resolve_expression(self, cursor, product, namespace, params):
-        return pd.Series([self.value])
+        return self.value
 
     @property
     def df_index(self):
