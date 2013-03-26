@@ -83,7 +83,7 @@ class DialectTest(TestBase):
         from sqlalchemy.sql.functions import GenericFunction
         class MyFunc(GenericFunction):
             name = 'myfunc'
-            def pandas_fn(self, arg):
+            def pandas_fn(self):
                 return pd.Series(["hi"])
         result = eng.execute(func.myfunc())
         eq_(

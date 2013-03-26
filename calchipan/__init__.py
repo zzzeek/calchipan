@@ -1,3 +1,3 @@
 __version__ = '0.1.0'
 
-from resolver import aggregate_fn
+from resolver import aggregate_fn, non_aggregate_fn

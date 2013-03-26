@@ -3,6 +3,8 @@ import pandas as pd
 import numpy as np
 from calchipan import dbapi, base
 from . import eq_, assert_raises_message
+from calchipan import aggregate_fn, non_aggregate_fn
+
 from sqlalchemy import Table, Column, Integer, union_all, \
         String, MetaData, select, and_, or_, ForeignKey, \
         func, exc, schema, literal, Float
@@ -304,6 +306,46 @@ class RoundTripTest(_ExecBase, TestBase):
                 ('jack', 'Accounting'), (None, 'Sales')]
         )
 
+    def test_select_labels_1(self):
+        emp, dep, conn = self._emp_d_fixture()
+        stmt = select([emp.c.name, emp.c.fullname]).alias()
+        stmt = select([stmt]).apply_labels().order_by(stmt.c.name)
+        r = self._exec_stmt(conn, stmt)
+        eq_([c[0] for c in r.description], ['anon_1_name', u'anon_1_fullname'])
+        eq_(
+            r.fetchall(),
+            [('ed', 'Ed Jones'), ('jack', 'Jack Smith'),
+                ('wendy', 'Wendy Wharton')]
+        )
+
+    def test_select_expression_1(self):
+        emp, dep, conn = self._emp_d_fixture()
+        stmt = select([3])
+        r = self._exec_stmt(conn, stmt)
+        eq_(
+            r.fetchall(),
+            [('3',)]
+        )
+
+    def test_select_expression_2(self):
+        emp, dep, conn = self._emp_d_fixture()
+        stmt = select([literal(3)])
+        r = self._exec_stmt(conn, stmt)
+        eq_(
+            r.fetchall(),
+            [(3,)]
+        )
+
+    def test_select_expression_3(self):
+        emp, dep, conn = self._emp_d_fixture()
+        stmt = select([literal(3) + 5])
+        r = self._exec_stmt(conn, stmt)
+        eq_(
+            r.fetchall(),
+            [(8,)]
+        )
+
+
     def test_correlated_subquery_column(self):
         emp, dep, conn = self._emp_d_fixture()
 
@@ -472,10 +514,9 @@ class RoundTripTest(_ExecBase, TestBase):
             [(3, )]
         )
 
-    def test_custom_function(self):
+    def test_custom_function_aggregate(self):
         n_t, conn = self._numbers_fixture()
 
-        from calchipan import aggregate_fn
         @aggregate_fn()
         def stddev(values):
             return values.std()
@@ -486,6 +527,34 @@ class RoundTripTest(_ExecBase, TestBase):
         eq_(
             r.fetchall(),
             [(0.005000000000000014, 0.0095742710775633677)]
+        )
+
+    def test_custom_function_multidimensional_aggregate(self):
+        n_t, conn = self._numbers_fixture()
+
+        @aggregate_fn()
+        def fancy(x):
+            return x[0][0] + x[1][0]
+
+        stmt = select([fancy(n_t.c.c, n_t.c.d)])
+        r = self._exec_stmt(conn, stmt)
+        eq_(
+            r.fetchall(),
+            [(0.06,)]
+        )
+
+    def test_custom_function_non_aggregate(self):
+        emp, dep, conn = self._emp_d_fixture()
+
+        @non_aggregate_fn()
+        def add_numbers(x, y):
+            return x + y
+
+        stmt = select([add_numbers(1, 2)])
+        r = self._exec_stmt(conn, stmt)
+        eq_(
+            r.fetchall(),
+            [(3,)]
         )
 
     def test_custom_function_namespace(self):
@@ -618,6 +687,17 @@ class RoundTripTest(_ExecBase, TestBase):
             [('jack', 'Accounting')]
         )
 
+    def test_order_by_grouped_aggregate(self):
+        emp, dep, conn = self._emp_d_fixture()
+
+        stmt = select([func.count(emp.c.name), emp.c.dep_id]).\
+                    group_by(emp.c.dep_id).order_by(func.count(emp.c.name))
+        r = self._exec_stmt(conn, stmt)
+        eq_(
+            r.fetchall(),
+            [(1, 2), (2, 1)]
+        )
+
     def test_group_by_max(self):
         emp, dep, conn = self._emp_d_fixture()
 
@@ -639,6 +719,7 @@ class RoundTripTest(_ExecBase, TestBase):
             r.fetchall(),
             [(2, 1), (1, 2)]
         )
+
 
     def test_group_by_having_col(self):
         emp, dep, conn = self._emp_d_fixture()

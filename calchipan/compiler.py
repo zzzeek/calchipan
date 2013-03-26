@@ -90,7 +90,12 @@ class PandasCompiler(compiler.SQLCompiler):
             if isinstance(tablename, sql._truncated_label):
                 tablename = self._truncated_identifier("alias", tablename)
 
-        return resolver.ColumnResolver(name, tablename)
+        if is_literal:
+            assert tablename is None
+            assert table is None
+            return resolver.LiteralResolver(name)
+        else:
+            return resolver.ColumnResolver(name, tablename)
 
     def visit_unary(self, unary, **kw):
         return resolver.UnaryResolver(

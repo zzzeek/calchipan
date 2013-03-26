@@ -18,7 +18,7 @@ from sqlalchemy.ext.compiler import compiles
 def aggregate_fn(package=None):
     """Mark a Python function as a SQL aggregate function.
 
-    The function should receive a Pandas Series object
+    The function should typically receive a Pandas Series object
     as an argument and return a scalar result.
 
     E.g.::
@@ -51,6 +51,10 @@ def aggregate_fn(package=None):
         from sqlalchemy import func
         stmt = select([func.numpy.stddev(table.c.value)])
 
+    An aggregate function that is called with multiple expressions
+    will be passed a single argument that is a list of Series
+    objects.
+
     """
     def mark_aggregate(fn):
         kwargs = {'name': fn.__name__}
@@ -64,6 +68,39 @@ def aggregate_fn(package=None):
                     compiler.process(expr.clauses, **kw), True)
         return custom_func
     return mark_aggregate
+
+def non_aggregate_fn(package=None):
+    """Mark a Python function as a SQL non-aggregate function.
+
+    The function should receive zero or more scalar
+    Python objects as arguments and return a scalar result.
+
+    E.g.::
+
+        from calchipan import non_aggregate_fn
+
+        @non_aggregate_fn()
+        def add_numbers(value1, value2):
+            return value1 + value2
+
+    Usage and behavior is identical to that of :func:`.aggregate_fn`,
+    except that the function is not treated as an aggregate.  Function
+    expressions are also expanded out to individual positional arguments,
+    whereas an aggregate always receives a single structure as an argument.
+
+    """
+    def mark_non_aggregate(fn):
+        kwargs = {'name': fn.__name__}
+        if package:
+            kwargs['package'] = package
+        custom_func = type("%sFunc" % fn.__name__, (GenericFunction,), kwargs)
+
+        @compiles(custom_func, 'pandas')
+        def _compile_fn(expr, compiler, **kw):
+            return FunctionResolver(fn,
+                    compiler.process(expr.clauses, **kw), False)
+        return custom_func
+    return mark_non_aggregate
 
 class Resolver(object):
     pass
@@ -83,10 +120,13 @@ class FunctionResolver(ColumnElementResolver):
         self.aggregate = aggregate
 
     def resolve_expression(self, cursor, product, namespace, params):
-        q = self.fn(self.expr.resolve_expression(
-                    cursor, product, namespace, params))
         if self.aggregate:
+            q = self.fn(self.expr.resolve_expression(
+                    cursor, product, namespace, params))
             q = pd.Series([q], name="aggregate")
+        else:
+            q = self.fn(*self.expr.resolve_expression(
+                    cursor, product, namespace, params))
         return q
 
 class ConstantResolver(ColumnElementResolver):
@@ -95,6 +135,18 @@ class ConstantResolver(ColumnElementResolver):
 
     def resolve_expression(self, cursor, product, namespace, params):
         return self.value
+
+class LiteralResolver(ColumnElementResolver):
+    def __init__(self, value):
+        self.value = value
+        self.name = str(id(self))
+
+    def resolve_expression(self, cursor, product, namespace, params):
+        return pd.Series([self.value])
+
+    @property
+    def df_index(self):
+        return self.name
 
 class ColumnResolver(ColumnElementResolver):
     def __init__(self, name, tablename):
@@ -350,9 +402,10 @@ class JoinResolver(FromResolver):
         return df1
 
 
-class _HavingCol(ColumnElementResolver):
-    def __init__(self, expr):
+class _ExprCol(ColumnElementResolver):
+    def __init__(self, expr, name):
         self.expr = expr
+        self.name = name
 
     def resolve_expression(self, cursor, product, namespace, params):
         return self.expr.resolve_expression(
@@ -360,7 +413,7 @@ class _HavingCol(ColumnElementResolver):
 
     @property
     def df_index(self):
-        return "_having"
+        return self.name
 
 class BaseSelectResolver(FromResolver):
     group_by = None
@@ -388,17 +441,26 @@ class BaseSelectResolver(FromResolver):
             groups = [product]
 
         frame_columns = list(self.columns)
+
         if self.having is not None:
             if self.group_by is None:
                 raise dbapi.Error("HAVING must also have GROUP BY")
-            frame_columns.append(_HavingCol(self.having))
+            frame_columns.append(_ExprCol(self.having, '_having'))
+
+        if self.order_by is not None:
+            for idx, ob_expr in enumerate(self.order_by.expressions):
+                frame_columns.append(_ExprCol(ob_expr, '_order_by_%d' % idx))
 
         def process_aggregates(gprod):
-            """detect aggregate funcitons in column clauses and
+            """detect aggregate functions in column clauses and
             flatten results if present
             """
-            cols = [c.resolve_expression(cursor, gprod,
-                            namespace, params).reset_index(drop=True)
+            cols = [
+                    _coerce_to_series(
+                        cursor,
+                        c.resolve_expression(cursor, gprod,
+                                namespace, params)
+                    ).reset_index(drop=True)
                     for c in frame_columns]
 
 
@@ -418,7 +480,6 @@ class BaseSelectResolver(FromResolver):
         nu = _unique_name()
         names = [nu(c.name) for c in self.columns]
 
-
         group_results = [
             cursor.api.df_from_items(
                     [
@@ -432,6 +493,7 @@ class BaseSelectResolver(FromResolver):
             )
             for gprod in groups
         ]
+
         non_empty = [g for g in group_results if len(g)]
         if not non_empty:
             # empty result
@@ -450,9 +512,7 @@ class BaseSelectResolver(FromResolver):
                 ascending = \
                     not isinstance(ob_expr, UnaryResolver) or \
                     ob_expr.modifier is not operators.desc_op
-                key = '_sort_%d' % idx
-                results[key] = ob_expr.resolve_expression(
-                        cursor, DerivedResolver(results), namespace, params)
+                key = '_order_by_%d' % idx
                 cols.append(key)
                 asc.append(ascending)
             results = cursor.api.df_sort(results, columns=cols, ascending=asc).\
@@ -697,6 +757,10 @@ class DropTableResolver(DDLResolver):
             raise dbapi.Error("No such dataframe '%s'" % self.tablename)
         del namespace[self.tablename]
 
+def _coerce_to_series(cursor, col):
+    if not isinstance(col, pd.Series):
+        col = pd.Series([col])
+    return col
 
 def _coerce_to_scalar(cursor, col):
     if isinstance(col, pd.Series):
