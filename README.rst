@@ -109,14 +109,17 @@ working quite nicely, and yes, you can do a pretty decent range of SQL operation
 here, noting the caveats that **this is super duper alpha stuff I just started a week ago**.
 Some SQL operations that we normally take for granted will **perform pretty badly**
 (guide is below), so at the moment it's not entirely clear how much speed will be
-an issue.  There are comprehensive tests for all the SQL operations implemented,
-but these are only rudimentary "does it work at all" tests - dealing
-with at most about six rows and just two tables.   I've run some more real world ORM
-types of scripts, and while the results are encouraging, handling SQLAlchemy's
-rather complex eager loading queries very nicely, the performance of some
-operations (particularly data mutations) are a little slow, but then again Pandas is not oriented
-towards manipulation of DataFrames in a CRUD-style way so for straight up SELECTs
-it may be quite useful for some people.
+an issue.  There's a good number of tests for all the SQL functionality
+that's been implemented, though these are all rudimentary "does it work at all"
+tests dealing with at most only three or four rows and two tables.
+Additional functional tests with real world ORM examples have shown very good
+results, illustrating queries with fairly complex geometries (lots of subqueries,
+aliases, and joins) working very well with no errors.  The performance
+of some operations, particularly data mutation operations, are
+fairly slow, but Pandas is not oriented
+towards manipulation of DataFrames in a CRUD-style way in any case.
+For straight up SELECTs that stay close to primary Pandas use cases, results
+should be pretty decent.
 
 Can I just type "select * from table" and it will work?
 =======================================================================
@@ -144,17 +147,18 @@ all your dataframes out to the database for each table (which might not be a pro
 pandasql also doesn't provide easy hooks for usage with packages like SQLAlchemy, though the whole
 thing is only 50 lines so hacking its approach might be worth it.
 
-OK, will it at least return the right results to me?
-======================================================
+Will CALCHIPAN at least return the right results to me?
+========================================================
 
-So far so good, but I've only done very rudimentary testing.  If you look at
+As noted before, initial testing looks very good.  But note that this is
+half of a relational database implementation written in Python; if you look at
 `sqlite's changelog <http://www.sqlite.org/releaselog/3_7_16.html>`_ you can see they
 are still fixing "I got the wrong answer" types of bugs after **nine years of
-development**, which represents 46800% of Calchipan's development time
-of exactly one week (as of March 25, 2013), so I cannot stress enough, **Calchipan is
-way too new to be trusted with anything at all.**  Feel free to use the bugtracker
-here to report on early usage experiences and issues, the latter should absolutely
-be expected.
+development**, which is 46800% the number of weeks versus Calchipans one week
+of development time as of March 25, 2013.  So as a rule of thumb I'd
+say **Calchipan is way too new to be trusted with anything at all.**
+Feel free to use the bugtracker here to report on early usage experiences
+and issues, the latter should absolutely be expected.
 
 Performance Notes
 ==================
