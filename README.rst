@@ -101,6 +101,23 @@ also put it into a sub-"package" called ``numpy``::
   from sqlalchemy import func
   result = engine.execute(select([func.numpy.stddev(mytable.c.data)]))
 
+Autoincrement
+=============
+
+The ``Table`` object can be configured to deliver the index
+of the data frame as the "primary key" of the table, which will
+also work as an "autoincrement" field when rows are inserted.
+This feature requires SQLAlchemy 0.8.1 (or latest tip) to work::
+
+  my_table = Table('my_dataframe', metadata,
+              Column('id', Integer, primary_key=True),
+              Column('data', Integer),
+              pandas_index_pk=True
+            )
+
+  result = engine.execute(my_table.insert().values(data=5))
+  pk = result.inserted_primary_key()
+
 Great, so Pandas is totally SQL-capable now right?
 ==================================================
 
