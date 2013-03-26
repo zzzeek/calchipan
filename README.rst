@@ -25,33 +25,52 @@ Example
 ::
 
   from sqlalchemy import create_engine, MetaData, Table, Column, \
-      Integer, select
+      Integer, select, String
 
   engine = create_engine("pandas://")
 
   m = MetaData()
-  t1 = Table('t1', m,
-        Column('x', Integer, primary_key=True),
-        Column('y', Integer)
-      )
+  employee = Table('emp', m,
+      Column('emp_id', Integer, primary_key=True),
+      Column('name', String)
+    )
   m.create_all(engine)
-  engine.execute(t1.insert().values(x=1, y=2))
+  engine.execute(employee.insert().values(emp_id=1, name='ed'))
 
-  result = engine.execute(select([t1]).where(t1.c.x == 1))
+  result = engine.execute(
+          select([employee]).where(employee.c.name == 'ed')
+        )
 
-  result.fetchall()
-
+  print(result.fetchall())
 
 The engine can be passed a series of existing dataframes, and
 rudimentary table reflection works too (obviously primary/foreign keys
 would have to be established manually)::
 
+  import pandas as pd
+
+  dept_df = pd.DataFrame([{"dep_id": 1, "name": "Engineering"},
+                      {"dep_id": 2, "name": "Accounting"}])
+
+  emp_df = pd.DataFrame([
+      {"emp_id": 1, "name": "ed", "fullname": "Ed Jones", "dep_id": 1},
+      {"emp_id": 2, "name": "wendy", "fullname": "Wendy Wharton", "dep_id": 1}
+      ])
+
   engine = create_engine("pandas://",
-        namespace={"df1": dataframe, "df2": otherdataframe})
+              namespace={"dept": dept_df, "emp": emp_df})
 
   m = MetaData()
-  df1 = Table('df1', m, autoload=True, autoload_with=engine)
-  df2 = Table('df1', m, autoload=True, autoload_with=engine)
+  department = Table('dept', m, autoload=True, autoload_with=engine)
+  employee = Table('emp', m, autoload=True, autoload_with=engine)
+
+  result = engine.execute(
+              select([employee.c.name, department.c.name]).
+                  select_from(
+                          employee.join(department,
+                              employee.c.dep_id == department.c.dep_id))
+              )
+  print(result.fetchall())
 
 Add Any Python Function
 =======================
