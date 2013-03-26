@@ -43,9 +43,17 @@ Example
 
   print(result.fetchall())
 
-The engine can be passed a series of existing dataframes, and
-rudimentary table reflection works too (obviously primary/foreign keys
-would have to be established manually)::
+Note we didn't need to import Pandas at all above; we created
+and populated the table entirely using SQLAlchemy means,
+and Pandas remained hidden as a storage engine - hence the name!
+
+Of course, you can and in most cases probably should start with
+regular Pandas dataframes, and send them off into an engine
+to be queried.  Using this approach, the Table objects can
+be built explicitly or more easily just reflected as below;
+obviously primary/foreign key constraints, useful for when
+using the ORM, would still have to be established
+manually::
 
   import pandas as pd
 
