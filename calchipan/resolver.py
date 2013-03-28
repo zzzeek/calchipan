@@ -617,7 +617,8 @@ class CompoundResolver(BaseSelectResolver):
         return self.resolve(ctx)
 
     def _evaluate(self, ctx, correlate=None, **kw):
-        assert self.keyword is sql.CompoundSelect.UNION_ALL
+        assert self.keyword in (sql.CompoundSelect.UNION,
+                                sql.CompoundSelect.UNION_ALL)
 
         evaluated = [
             sel.resolve(ctx, **kw)
@@ -632,6 +633,8 @@ class CompoundResolver(BaseSelectResolver):
                 inplace=True)
 
         df = pd.concat(evaluated)
+        if self.keyword == sql.CompoundSelect.UNION:
+            df = df.drop_duplicates()
         return DerivedResolver(df)
 
 class CRUDResolver(Resolver):

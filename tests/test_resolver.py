@@ -8,7 +8,7 @@ from calchipan import aggregate_fn, non_aggregate_fn
 
 from sqlalchemy import Table, Column, Integer, union_all, \
         String, MetaData, select, and_, or_, ForeignKey, \
-        func, exc, schema, literal, Float
+        func, exc, schema, literal, Float, union
 
 class _ExecBase(object):
     def _exec_stmt(self, conn, stmt):
@@ -472,7 +472,7 @@ class RoundTripTest(_ExecBase, TestBase):
             ['name', 'name_1']
         )
 
-    def test_union_homogeneous(self):
+    def test_union_all_homogeneous(self):
         emp, dep, conn = self._emp_d_fixture()
 
         s1 = select([emp.c.name]).where(emp.c.name == "wendy")
@@ -483,7 +483,7 @@ class RoundTripTest(_ExecBase, TestBase):
         eq_(r.fetchall(),
             [('wendy',), ('wendy',), ('jack',)])
 
-    def test_union_heterogeneous_columns(self):
+    def test_union_all_heterogeneous_columns(self):
         emp, dep, conn = self._emp_d_fixture()
 
         s1 = select([emp.c.name])
@@ -494,7 +494,7 @@ class RoundTripTest(_ExecBase, TestBase):
             [('ed',), ('wendy',), ('jack',),
                 ('Engineering',), ('Accounting',), ('Sales',)])
 
-    def test_union_limit_offset(self):
+    def test_union_all_limit_offset(self):
         emp, dep, conn = self._emp_d_fixture()
 
         s1 = select([emp.c.name])
@@ -504,7 +504,7 @@ class RoundTripTest(_ExecBase, TestBase):
         eq_(r.fetchall(),
             [('Sales',), ('ed',), ('jack',)])
 
-    def test_union_heterogeneous_types(self):
+    def test_union_all_heterogeneous_types(self):
         emp, dep, conn = self._emp_d_fixture()
 
         s1 = select([emp.c.name, emp.c.fullname]).where(emp.c.name == 'jack')
@@ -515,6 +515,47 @@ class RoundTripTest(_ExecBase, TestBase):
             ('jack', 'Jack Smith'), (1, 'Engineering'),
             (2, 'Accounting'), (3, 'Sales')])
 
+    def test_union_homogeneous(self):
+        emp, dep, conn = self._emp_d_fixture()
+
+        s1 = select([emp.c.name]).where(emp.c.name == "wendy")
+        s2 = select([emp.c.name]).where(or_(emp.c.name == 'wendy',
+                        emp.c.name == 'jack'))
+        u1 = union(s1, s2)
+        r = self._exec_stmt(conn, u1)
+        eq_(r.fetchall(), [('wendy',), ('jack',)])
+
+    def test_union_heterogeneous_columns(self):
+        emp, dep, conn = self._emp_d_fixture()
+
+        s1 = select([emp.c.name])
+        s2 = select([dep.c.name])
+        u1 = union(s1, s2)
+        r = self._exec_stmt(conn, u1)
+        eq_(r.fetchall(),
+            [('ed',), ('wendy',), ('jack',),
+                ('Engineering',), ('Accounting',), ('Sales',)])
+
+    def test_union_limit_offset(self):
+        emp, dep, conn = self._emp_d_fixture()
+
+        s1 = select([emp.c.name])
+        s2 = select([dep.c.name])
+        u1 = union(s1, s2).order_by(emp.c.name).limit(3).offset(2)
+        r = self._exec_stmt(conn, u1)
+        eq_(r.fetchall(),
+            [('Sales',), ('ed',), ('jack',)])
+
+    def test_union_heterogeneous_types(self):
+        emp, dep, conn = self._emp_d_fixture()
+
+        s1 = select([emp.c.name, emp.c.fullname]).where(emp.c.name == 'jack')
+        s2 = select([dep.c.dep_id, dep.c.name])
+        u1 = union(s1, s2)
+        r = self._exec_stmt(conn, u1)
+        eq_(r.fetchall(), [
+            ('jack', 'Jack Smith'), (1, 'Engineering'),
+            (2, 'Accounting'), (3, 'Sales')])
 
     def test_count_function(self):
         emp, dep, conn = self._emp_d_fixture()
