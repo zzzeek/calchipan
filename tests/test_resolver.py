@@ -5,6 +5,7 @@ from calchipan import dbapi, base
 from . import eq_, assert_raises_message
 from calchipan import aggregate_fn, non_aggregate_fn
 
+
 from sqlalchemy import Table, Column, Integer, union_all, \
         String, MetaData, select, and_, or_, ForeignKey, \
         func, exc, schema, literal, Float
@@ -20,6 +21,19 @@ class _ExecBase(object):
 
 
 class RoundTripTest(_ExecBase, TestBase):
+
+    def setUp(self):
+        self._merge = _merge = pd.DataFrame.merge
+        self.trace = trace = []
+        def wrap_merge(self, other, **kw):
+            result = _merge(self, other, **kw)
+            trace.append((self, other, result))
+            return result
+        pd.DataFrame.merge = wrap_merge
+
+    def tearDown(self):
+        del self.trace
+        pd.DataFrame.merge = self._merge
 
     def _numbers_fixture(self):
         numbers = pd.DataFrame(np.array(((0.01, 0.01, 0.02, 0.04, 0.03),
@@ -416,23 +430,17 @@ class RoundTripTest(_ExecBase, TestBase):
 
 
     def _assert_cartesian(self, conn):
-        pass
-        #assert self._has_cartesian(conn)
+        assert self._has_cartesian(conn)
 
     def _assert_no_cartesian(self, conn):
-        pass
-        #assert not self._has_cartesian(conn)
+        assert not self._has_cartesian(conn)
 
     def _has_cartesian(self, conn):
-        # TODO: instrument pandas merge()
-        # and detect cartesians
-        pass
-        #for elem in conn.trace:
-        #    if elem[0] == "merge" and \
-        #            len(elem[3]) == len(elem[1]) * len(elem[2]):
-        #        return True
-        #else:
-        #    return False
+        for df1, df2, product in self.trace:
+            if len(product) == len(df1) * len(df2):
+                return True
+        else:
+            return False
 
     def test_labeling(self):
         emp, dep, conn = self._emp_d_fixture()
