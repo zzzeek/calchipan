@@ -102,15 +102,47 @@ def non_aggregate_fn(package=None):
         return custom_func
     return mark_non_aggregate
 
+ResolverContext = collections.namedtuple("ResolverContext",
+                            ["cursor", "namespace", "params"])
+
 class Resolver(object):
-    pass
+    def __call__(self, cursor, namespace, params):
+        """Resolve this expression.
+
+        Resolvers are callables; this is called by the DBAPI."""
+        return self.resolve(ResolverContext(cursor, namespace, params))
+
+    def resolve(self, ctx):
+        """Resolve this expression given a ResolverContext.
+
+        Front end for resolution, linked to top-level __call__()."""
+        raise NotImplementedError()
 
 class NullResolver(Resolver):
-    def __call__(self, cursor, namespace, params):
+    def resolve(self, ctx):
         pass
 
 class ColumnElementResolver(Resolver):
-    def resolve_expression(self, cursor, product, namespace, params):
+    """Top level class for SQL expressions."""
+
+    def resolve_expression(self, ctx, product):
+        """Resolve as a column expression.
+
+        Return value here is typically a Series or a scalar
+        value.
+
+        """
+        raise NotImplementedError()
+
+class FromResolver(Resolver):
+    """Top level class for 'from' objects, things you can select rows from."""
+
+    def resolve_dataframe(self, ctx, names=True):
+        """Resolve as a dataframe.
+
+        Return value here is a DataFrame object.
+
+        """
         raise NotImplementedError()
 
 class FunctionResolver(ColumnElementResolver):
@@ -119,21 +151,21 @@ class FunctionResolver(ColumnElementResolver):
         self.expr = expr
         self.aggregate = aggregate
 
-    def resolve_expression(self, cursor, product, namespace, params):
+    def resolve_expression(self, ctx, product):
         if self.aggregate:
             q = self.fn(self.expr.resolve_expression(
-                    cursor, product, namespace, params))
+                    ctx, product))
             q = pd.Series([q], name="aggregate")
         else:
             q = self.fn(*self.expr.resolve_expression(
-                    cursor, product, namespace, params))
+                    ctx, product))
         return q
 
 class ConstantResolver(ColumnElementResolver):
     def __init__(self, value):
         self.value = value
 
-    def resolve_expression(self, cursor, product, namespace, params):
+    def resolve_expression(self, ctx, product):
         return self.value
 
 class LiteralResolver(ColumnElementResolver):
@@ -141,7 +173,7 @@ class LiteralResolver(ColumnElementResolver):
         self.value = value
         self.name = str(id(self))
 
-    def resolve_expression(self, cursor, product, namespace, params):
+    def resolve_expression(self, ctx, product):
         return self.value
 
     @property
@@ -153,12 +185,11 @@ class ColumnResolver(ColumnElementResolver):
         self.name = name
         self.tablename = tablename
 
-    def resolve_expression(self, cursor, product, namespace, params):
+    def resolve_expression(self, ctx, product):
         if product is None:
-            df = TableResolver(self.tablename).\
-                        resolve_dataframe(cursor, namespace, params)
+            df = TableResolver(self.tablename).resolve_dataframe(ctx)
         else:
-            df = product.resolve_dataframe(cursor, namespace, params)
+            df = product.resolve_dataframe(ctx)
         return df[self.df_index]
 
     @property
@@ -171,9 +202,9 @@ class UnaryResolver(ColumnElementResolver):
         self.modifier = modifier
         self.expression = expression
 
-    def resolve_expression(self, cursor, product, namespace, params):
+    def resolve_expression(self, ctx, product):
         return self.expression.resolve_expression(
-                            cursor, product, namespace, params)
+                            ctx, product)
 
     @property
     def df_index(self):
@@ -184,10 +215,8 @@ class LabelResolver(Resolver):
         self.expression = expression
         self.name = name
 
-    def resolve_expression(self, cursor, product, namespace, params):
-        return self.expression.resolve_expression(
-                                        cursor,
-                                        product, namespace, params)
+    def resolve_expression(self, ctx, product):
+        return self.expression.resolve_expression(ctx, product)
 
     @property
     def df_index(self):
@@ -200,12 +229,10 @@ class BinaryResolver(ColumnElementResolver):
         self.right = right
         self.operator = operator
 
-    def resolve_expression(self, cursor, product, namespace, params):
+    def resolve_expression(self, ctx, product):
         return self.operator(
-                    self.left.resolve_expression(
-                                            cursor, product, namespace, params),
-                    self.right.resolve_expression(
-                                            cursor, product, namespace, params),
+                    self.left.resolve_expression(ctx, product),
+                    self.right.resolve_expression(ctx, product),
                 )
 
 class ClauseListResolver(ColumnElementResolver):
@@ -213,10 +240,8 @@ class ClauseListResolver(ColumnElementResolver):
         self.expressions = expressions
         self.operator = operator
 
-    def resolve_expression(self, cursor, product, namespace, params):
-        exprs = [expr.resolve_expression(
-                                            cursor,
-                                            product, namespace, params)
+    def resolve_expression(self, ctx, product):
+        exprs = [expr.resolve_expression(ctx, product)
                         for expr in self.expressions]
 
         if self.operator is operators.comma_op:
@@ -231,17 +256,15 @@ class BindParamResolver(ColumnElementResolver):
     def __init__(self, name):
         self.name = name
 
-    def resolve_expression(self, cursor, product, namespace, params):
-        return params[self.name]
+    def resolve_expression(self, ctx, product):
+        return ctx.params[self.name]
 
-class FromResolver(Resolver):
-    pass
 
 class DerivedResolver(FromResolver):
     def __init__(self, dataframe):
         self.dataframe = dataframe
 
-    def resolve_dataframe(self, cursor, namespace, params, names=True):
+    def resolve_dataframe(self, ctx, names=True):
         return self.dataframe
 
 
@@ -250,8 +273,8 @@ class TableResolver(FromResolver):
         self.tablename = tablename
         self.autoincrement_col = autoincrement_col
 
-    def resolve_dataframe(self, cursor, namespace, params, names=True):
-        df = namespace[self.tablename]
+    def resolve_dataframe(self, ctx, names=True):
+        df = ctx.namespace[self.tablename]
         if names:
             # performance tests show that the rename() here is
             # not terribly expensive as long as copy=False.  Adding the
@@ -289,9 +312,8 @@ class AliasResolver(FromResolver):
         self.table = table
         self.aliasname = aliasname
 
-    def resolve_dataframe(self, cursor, namespace, params, names=True):
-        df = self.table.resolve_dataframe(
-                            cursor, namespace, params, names=False)
+    def resolve_dataframe(self, ctx, names=True):
+        df = self.table.resolve_dataframe(ctx, names=False)
         if names:
             df = df.rename(
                         columns=dict(
@@ -308,19 +330,19 @@ class JoinResolver(FromResolver):
         self.onclause = onclause
         self.isouter = isouter
 
-    def resolve_dataframe(self, cursor, namespace, params, names=True):
-        df1 = left = self.left.resolve_dataframe(cursor, namespace, params)
-        df2 = self.right.resolve_dataframe(cursor, namespace, params)
+    def resolve_dataframe(self, ctx, names=True):
+        df1 = left = self.left.resolve_dataframe(ctx)
+        df2 = self.right.resolve_dataframe(ctx)
 
         if self.isouter:
             left['_cp_left_index'] = left.index
 
         straight_binaries, remainder = self._produce_join_expressions(df1, df2)
 
-        df1 = self._merge_straight_binaries(cursor, df1, df2, straight_binaries)
+        df1 = self._merge_straight_binaries(ctx, df1, df2, straight_binaries)
 
-        df1 = self._merge_remainder(cursor, left, df1, df2,
-                            namespace, params, straight_binaries, remainder)
+        df1 = self._merge_remainder(ctx, left, df1, df2,
+                                    straight_binaries, remainder)
         return df1.where(pd.notnull(df1), None)
 
     def _produce_join_expressions(self, df1, df2):
@@ -357,7 +379,7 @@ class JoinResolver(FromResolver):
             remainder.append(comp)
         return straight_binaries, remainder
 
-    def _merge_straight_binaries(self, cursor, df1, df2, straight_binaries):
+    def _merge_straight_binaries(self, ctx, df1, df2, straight_binaries):
         if straight_binaries:
             # use merge() for straight binaries.
             left_on, right_on = zip(*straight_binaries)
@@ -365,8 +387,8 @@ class JoinResolver(FromResolver):
                             how='left' if self.isouter else 'inner')
         return df1
 
-    def _merge_remainder(self, cursor, left, df1, df2,
-                            namespace, params, straight_binaries, remainder):
+    def _merge_remainder(self, ctx, left, df1, df2,
+                            straight_binaries, remainder):
         # for joins that aren't straight "col == col",
         # we use the ON criterion directly.
         # if we don't already have a dataframe with the full
@@ -384,10 +406,8 @@ class JoinResolver(FromResolver):
             # those columns we need in the expression.   Then reindex
             # back out to the original dataframes.
             if not straight_binaries:
-                df1 = _cartesian_dataframe(cursor, df1, df2)
-            expr = remainder.resolve_expression(
-                        cursor, DerivedResolver(df1), namespace, params
-                    )
+                df1 = _cartesian_dataframe(ctx, df1, df2)
+            expr = remainder.resolve_expression(ctx, DerivedResolver(df1))
 
             joined = df1[expr]
 
@@ -407,9 +427,8 @@ class _ExprCol(ColumnElementResolver):
         self.expr = expr
         self.name = name
 
-    def resolve_expression(self, cursor, product, namespace, params):
-        return self.expr.resolve_expression(
-                        cursor, product, namespace, params)
+    def resolve_expression(self, ctx, product):
+        return self.expr.resolve_expression(ctx, product)
 
     @property
     def df_index(self):
@@ -426,16 +445,15 @@ class BaseSelectResolver(FromResolver):
     def columns(self):
         return []
 
-    def _evaluate(self, cursor, namespace, params, correlate=None):
+    def _evaluate(self, ctx, correlate=None):
         raise NotImplementedError()
 
-    def __call__(self, cursor, namespace, params, correlate=None):
-        product = self._evaluate(cursor, namespace, params, correlate)
+    def resolve(self, ctx, correlate=None):
+        product = self._evaluate(ctx, correlate)
 
         if self.group_by is not None:
-            df = product.resolve_dataframe(cursor, namespace, params)
-            gp = self.group_by.resolve_expression(
-                            cursor, product, namespace, params)
+            df = product.resolve_dataframe(ctx)
+            gp = self.group_by.resolve_expression(ctx, product)
             groups = [DerivedResolver(gdf[1]) for gdf in df.groupby(gp)]
         else:
             groups = [product]
@@ -457,9 +475,8 @@ class BaseSelectResolver(FromResolver):
             """
             cols = [
                     _coerce_to_series(
-                        cursor,
-                        c.resolve_expression(cursor, gprod,
-                                namespace, params)
+                        ctx,
+                        c.resolve_expression(ctx, gprod)
                     ).reset_index(drop=True)
                     for c in frame_columns]
 
@@ -541,14 +558,14 @@ class SelectResolver(BaseSelectResolver):
         return []
 
 
-    def resolve_dataframe(self, cursor, namespace, params, names=True):
-        return self(cursor, namespace, params)
+    def resolve_dataframe(self, ctx, names=True):
+        return self.resolve(ctx)
 
-    def resolve_expression(self, cursor, product, namespace, params):
+    def resolve_expression(self, ctx, product):
         # correlated subquery - resolve for every row.
         # TODO: probably *dont* need to resolve for every row
         # for an uncorrelated subquery, can detect that
-        p_df = product.resolve_dataframe(cursor, namespace, params)
+        p_df = product.resolve_dataframe(ctx)
 
         # iterate through rows in dataframe and form one-row
         # dataframes.  The ind:ind thing is the only way I could
@@ -557,12 +574,12 @@ class SelectResolver(BaseSelectResolver):
         for ind in p_df.index:
             row = p_df.ix[ind:ind]
             df = DerivedResolver(row)
-            thing = self._evaluate(cursor, namespace, params, correlate=df)
+            thing = self._evaluate(ctx, correlate=df)
 
-            things.append(_coerce_to_scalar(cursor, thing))
+            things.append(_coerce_to_scalar(ctx, thing))
         return pd.Series(things)
 
-    def _evaluate(self, cursor, namespace, params, correlate=None):
+    def _evaluate(self, ctx, correlate=None):
         if not self.dataframes:
             # "null" dataframe
             product = DerivedResolver(pd.DataFrame(
@@ -570,21 +587,17 @@ class SelectResolver(BaseSelectResolver):
         else:
             product = self.dataframes[0]
         for df in self.dataframes[1:]:
-            product = _cartesian(cursor, product, df, namespace, params)
+            product = _cartesian(ctx, product, df)
         if correlate:
-            product = _cartesian(cursor, product, correlate, namespace, params)
-        df = product.resolve_dataframe(cursor, namespace, params)
+            product = _cartesian(ctx, product, correlate)
+        df = product.resolve_dataframe(ctx)
         if self.whereclause is not None:
-            df = df[self.whereclause.resolve_expression(
-                            cursor,
-                            product, namespace, params)]
+            df = df[self.whereclause.resolve_expression(ctx, product)]
 
         product = DerivedResolver(df)
         if correlate:
-            col = self.columns[0].resolve_expression(
-                            cursor,
-                            product, namespace, params)
-            return _coerce_to_scalar(cursor, col)
+            col = self.columns[0].resolve_expression(ctx, product)
+            return _coerce_to_scalar(ctx, col)
 
         return product
 
@@ -600,14 +613,14 @@ class CompoundResolver(BaseSelectResolver):
     def columns(self):
         return self.selects[0].columns
 
-    def resolve_dataframe(self, cursor, namespace, params, names=True):
-        return self(cursor, namespace, params)
+    def resolve_dataframe(self, ctx, names=True):
+        return self.resolve(ctx)
 
-    def _evaluate(self, cursor, namespace, params, correlate=None, **kw):
+    def _evaluate(self, ctx, correlate=None, **kw):
         assert self.keyword is sql.CompoundSelect.UNION_ALL
 
         evaluated = [
-            sel(cursor, namespace, params, **kw)
+            sel.resolve(ctx, **kw)
             for sel in self.selects
         ]
 
@@ -632,8 +645,8 @@ class InsertResolver(CRUDResolver):
         self.tablename = tablename
         self.pandas_index_pk = pandas_index_pk
 
-    def __call__(self, cursor, namespace, params, **kw):
-        df = namespace[self.tablename]
+    def resolve(self, ctx, **kw):
+        df = ctx.namespace[self.tablename]
         if not self.values:
             new = df.append({}, ignore_index=True)
         elif isinstance(self.values[0], list):
@@ -641,7 +654,7 @@ class InsertResolver(CRUDResolver):
                 pd.DataFrame(
                     [
                         dict((c,
-                            v.resolve_expression(cursor, None, namespace, params))
+                            v.resolve_expression(ctx, None))
                             for c, v in zip(self.columns, row))
                         for row in self.values
                     ]
@@ -649,16 +662,16 @@ class InsertResolver(CRUDResolver):
             )
         else:
             new = df.append(dict(
-                    (c, v.resolve_expression(cursor, None, namespace, params))
+                    (c, v.resolve_expression(ctx, None))
                     for c, v in zip(self.columns, self.values)
                 ), ignore_index=True)
 
         # TODO: is 'value=[None]' correct usage here?
-        namespace[self.tablename] = new.fillna(value=[None])
+        ctx.namespace[self.tablename] = new.fillna(value=[None])
         if self.pandas_index_pk:
-            cursor.lastrowid = new.index[-1]
+            ctx.cursor.lastrowid = new.index[-1]
         else:
-            cursor.lastrowid = None
+            ctx.cursor.lastrowid = None
 
 class UpdateResolver(CRUDResolver):
     values = ()
@@ -668,15 +681,13 @@ class UpdateResolver(CRUDResolver):
         self.tablename = tablename
         self.autoincrement_col = autoincrement_col
 
-    def __call__(self, cursor, namespace, params, **kw):
-        dataframe = namespace[self.tablename]
+    def resolve(self, ctx, **kw):
+        dataframe = ctx.namespace[self.tablename]
         product = TableResolver(self.tablename,
                         autoincrement_col=self.autoincrement_col)
-        df = product.resolve_dataframe(cursor, namespace, params)
+        df = product.resolve_dataframe(ctx)
         if self.whereclause is not None:
-            df_ind = df[self.whereclause.resolve_expression(
-                                cursor,
-                                product, namespace, params)]
+            df_ind = df[self.whereclause.resolve_expression(ctx, product)]
         else:
             df_ind = df
 
@@ -685,11 +696,11 @@ class UpdateResolver(CRUDResolver):
             product = DerivedResolver(df_ind.ix[ind:ind])
 
             for k, v in self.values:
-                thing = v.resolve_expression(cursor, product, namespace, params)
-                thing = _coerce_to_scalar(cursor, thing)
+                thing = v.resolve_expression(ctx, product)
+                thing = _coerce_to_scalar(ctx, thing)
 
                 dataframe[k][ind] = thing
-        cursor.rowcount = len(df_ind)
+        ctx.cursor.rowcount = len(df_ind)
 
 class DeleteResolver(CRUDResolver):
     whereclause = None
@@ -698,20 +709,18 @@ class DeleteResolver(CRUDResolver):
         self.tablename = tablename
         self.autoincrement_col = autoincrement_col
 
-    def __call__(self, cursor, namespace, params, **kw):
-        dataframe = namespace[self.tablename]
+    def resolve(self, ctx, **kw):
+        dataframe = ctx.namespace[self.tablename]
         product = TableResolver(self.tablename,
                         autoincrement_col=self.autoincrement_col)
-        df = product.resolve_dataframe(cursor, namespace, params)
+        df = product.resolve_dataframe(ctx)
         if self.whereclause is not None:
-            df_ind = df[self.whereclause.resolve_expression(
-                                cursor,
-                                product, namespace, params)]
+            df_ind = df[self.whereclause.resolve_expression(ctx, product)]
         else:
             df_ind = df
 
-        namespace[self.tablename] = dataframe.drop(df_ind.index)
-        cursor.rowcount = len(df_ind)
+        ctx.namespace[self.tablename] = dataframe.drop(df_ind.index)
+        ctx.cursor.rowcount = len(df_ind)
 
 class DDLResolver(Resolver):
     pass
@@ -724,8 +733,8 @@ class CreateTableResolver(DDLResolver):
         self.autoincrement_col = autoincrement_col
         self.pandas_index_pk = pandas_index_pk
 
-    def __call__(self, cursor, namespace, params, **kw):
-        if self.tablename in namespace:
+    def resolve(self, ctx, **kw):
+        if self.tablename in ctx.namespace:
             raise dbapi.Error("Dataframe '%s' already exists" % self.tablename)
 
         # TODO: this is a hack for now
@@ -737,7 +746,7 @@ class CreateTableResolver(DDLResolver):
             else:
                 return np.dtype('object')
 
-        namespace[self.tablename] = pd.DataFrame.from_items([
+        ctx.namespace[self.tablename] = pd.DataFrame.from_items([
                 (c, pd.Series(dtype=get_type(typ)))
                 for (c, typ) in zip(self.colnames, self.coltypes)
                 if not self.pandas_index_pk
@@ -748,17 +757,17 @@ class DropTableResolver(DDLResolver):
     def __init__(self, tablename):
         self.tablename = tablename
 
-    def __call__(self, cursor, namespace, params, **kw):
-        if self.tablename not in namespace:
+    def resolve(self, ctx, **kw):
+        if self.tablename not in ctx.namespace:
             raise dbapi.Error("No such dataframe '%s'" % self.tablename)
-        del namespace[self.tablename]
+        del ctx.namespace[self.tablename]
 
-def _coerce_to_series(cursor, col):
+def _coerce_to_series(ctx, col):
     if not isinstance(col, pd.Series):
         col = pd.Series([col])
     return col
 
-def _coerce_to_scalar(cursor, col):
+def _coerce_to_scalar(ctx, col):
     if isinstance(col, pd.Series):
         col = col.reset_index(drop=True)
         if len(col) > 1:
@@ -778,7 +787,7 @@ def _unique_name():
             return name
     return go
 
-def _cartesian(cursor, f1, f2, namespace, params):
+def _cartesian(ctx, f1, f2):
     """produce a cartesian product.
 
     This is to support multiple FROM clauses against a WHERE.
@@ -788,15 +797,14 @@ def _cartesian(cursor, f1, f2, namespace, params):
     at least.
 
     """
-    df1, df2 = f1.resolve_dataframe(cursor, namespace, params), \
-                    f2.resolve_dataframe(cursor, namespace, params)
+    df1, df2 = f1.resolve_dataframe(ctx), f2.resolve_dataframe(ctx)
 
     return DerivedResolver(
-                _cartesian_dataframe(cursor, df1, df2)
+                _cartesian_dataframe(ctx, df1, df2)
             )
 
 
-def _cartesian_dataframe(cursor, df1, df2):
+def _cartesian_dataframe(ctx, df1, df2):
     if '_cartesian_ones' not in df1:
         df1['_cartesian_ones'] = np.ones(len(df1))
     if '_cartesian_ones' not in df2:

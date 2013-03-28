@@ -1,6 +1,5 @@
 """A DBAPI (pep-249) emulation layer."""
 import pandas as pd
-import numpy as np
 from . import compat
 import itertools
 
