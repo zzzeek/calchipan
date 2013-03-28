@@ -5,14 +5,14 @@ from . import compat
 import itertools
 
 
-def connect(namespace=None, trace=False):
+def connect(namespace=None):
     """Create a 'connection'.
 
     :param namespace: optional dictionary of names to pandas
      DataFrame objects.
 
     """
-    return Connection(namespace, trace)
+    return Connection(namespace)
 
 paramstyle = 'named'
 
@@ -20,16 +20,8 @@ class Error(Exception):
     pass
 
 class Connection(object):
-    def __init__(self, namespace=None, trace=False):
+    def __init__(self, namespace=None):
         self._namespace = namespace if namespace is not None else {}
-        self.api = PandasAPI(log=trace)
-
-    @property
-    def trace(self):
-        return self.api._buf
-
-    def trace_as_string(self):
-        return _print_trace(self.trace)
 
     def add_namespace(self, name, dataframe):
         self._namespace[name] = dataframe
@@ -53,7 +45,6 @@ class Cursor(object):
 
     def __init__(self, connection):
         self.namespace = connection._namespace
-        self.api = connection.api
 
     def execute(self, stmt, params=None):
         """Execute a 'statement'.
@@ -105,80 +96,3 @@ class Cursor(object):
     def close(self):
         pass
 
-class PandasAPI(object):
-    """Facade for Pandas methods; allows tracing of all function calls."""
-
-    def __init__(self, log=False):
-        self.log = log
-        if log:
-            self._buf = []
-
-    def merge(self, df1, df2, **kw):
-        df = pd.merge(df1, df2, **kw)
-        if self.log:
-            self._buf.append(("merge", df1, df2, df, kw))
-        return df
-
-    def concat(self, dfs, **kw):
-        df = pd.concat(dfs, **kw)
-        if self.log:
-            self._buf.append(("concat", dfs, df))
-        return df
-
-    def rename(self, df, columns=None, inplace=False, copy=True):
-        if self.log:
-            self._buf.append(("rename", df, columns))
-        return df.rename(columns=columns, inplace=inplace, copy=copy)
-
-    def df_sort(self, df, **kw):
-        if self.log:
-            self._buf.append(("sort", df, kw))
-        return df.sort(**kw)
-
-    def dataframe(self, *arg, **kw):
-        df = pd.DataFrame(*arg, **kw)
-        if self.log:
-            self._buf.append(("dataframe", df))
-        return df
-
-    def df_from_items(self, arg):
-        if self.log:
-            self._buf.append(("from_items", arg))
-        return pd.DataFrame.from_items(arg)
-
-    def to_string(self):
-        return _print_trace(self)
-
-def _print_trace(trace):
-    def _df_str(df):
-        return "%dx%d (%s)" % (len(df.keys()), len(df), ", ".join(df.keys()))
-
-    def _merge_str(rec):
-        return "Merge %s to %s to produce %s; %s" % (
-                            _df_str(rec[1]),
-                            _df_str(rec[2]),
-                            _df_str(rec[3]),
-                            rec[4],
-                        )
-
-    def _ones_str(rec):
-        return "Array of %d ones" % rec[1]
-
-    def _dataframe_str(rec):
-        return "Create dataframe %s" % (_df_str(rec[1]))
-
-    _trace_str = {
-        "merge": _merge_str,
-        "ones": _ones_str,
-        "dataframe": _dataframe_str
-    }
-
-    lines = []
-    for elem in trace:
-        try:
-            fn = _trace_str[elem[0]]
-        except KeyError:
-            pass
-        else:
-            lines.append(fn(elem))
-    return "\n".join(lines)

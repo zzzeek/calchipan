@@ -266,7 +266,7 @@ class TableResolver(FromResolver):
             # of the SQL dialect - that way it won't be copied here
             # each time.
 
-            renamed_df = cursor.api.rename(df,
+            renamed_df = df.rename(
                         columns=dict(
                             (k, "#T_%s_#C_%s" % (self.tablename, k))
                             for k in df.keys()
@@ -293,7 +293,7 @@ class AliasResolver(FromResolver):
         df = self.table.resolve_dataframe(
                             cursor, namespace, params, names=False)
         if names:
-            df = cursor.api.rename(df,
+            df = df.rename(
                         columns=dict(
                             (k, "#T_%s_#C_%s" % (self.aliasname, k))
                             for k in df.keys()
@@ -361,7 +361,7 @@ class JoinResolver(FromResolver):
         if straight_binaries:
             # use merge() for straight binaries.
             left_on, right_on = zip(*straight_binaries)
-            df1 = cursor.api.merge(df1, df2, left_on=left_on, right_on=right_on,
+            df1 = df1.merge(df2, left_on=left_on, right_on=right_on,
                             how='left' if self.isouter else 'inner')
         return df1
 
@@ -481,7 +481,7 @@ class BaseSelectResolver(FromResolver):
         names = [nu(c.name) for c in self.columns]
 
         group_results = [
-            cursor.api.df_from_items(
+            pd.DataFrame.from_items(
                     [
                         (
                             c.df_index,
@@ -497,9 +497,9 @@ class BaseSelectResolver(FromResolver):
         non_empty = [g for g in group_results if len(g)]
         if not non_empty:
             # empty result
-            return cursor.api.dataframe(columns=names)
+            return pd.DataFrame(columns=names)
         else:
-            results = cursor.api.concat(non_empty)
+            results = pd.concat(non_empty)
 
         if self.having is not None:
             results = results[results['_having'] == True]
@@ -515,12 +515,12 @@ class BaseSelectResolver(FromResolver):
                 key = '_order_by_%d' % idx
                 cols.append(key)
                 asc.append(ascending)
-            results = cursor.api.df_sort(results, columns=cols, ascending=asc).\
+            results = results.sort(columns=cols, ascending=asc).\
                             reset_index(drop=True)
             for col in cols:
                 del results[col]
 
-        cursor.api.rename(results, columns=dict(
+        results.rename(columns=dict(
                         (col.df_index, name)
                         for col, name in zip(self.columns, names)
                         ), inplace=True)
@@ -565,7 +565,7 @@ class SelectResolver(BaseSelectResolver):
     def _evaluate(self, cursor, namespace, params, correlate=None):
         if not self.dataframes:
             # "null" dataframe
-            product = DerivedResolver(cursor.api.dataframe(
+            product = DerivedResolver(pd.DataFrame(
                         [{col.df_index: [1]} for col in self.columns]))
         else:
             product = self.dataframes[0]
@@ -612,13 +612,13 @@ class CompoundResolver(BaseSelectResolver):
         ]
 
         for ev in evaluated:
-            cursor.api.rename(ev, columns=dict(
+            ev.rename(columns=dict(
                     (old, new.df_index) for old, new in
                     zip(ev.keys(), self.columns)
                 ),
                 inplace=True)
 
-        df = cursor.api.concat(evaluated)
+        df = pd.concat(evaluated)
         return DerivedResolver(df)
 
 class CRUDResolver(Resolver):
@@ -638,7 +638,7 @@ class InsertResolver(CRUDResolver):
             new = df.append({}, ignore_index=True)
         elif isinstance(self.values[0], list):
             new = df.append(
-                cursor.api.dataframe(
+                pd.DataFrame(
                     [
                         dict((c,
                             v.resolve_expression(cursor, None, namespace, params))
@@ -801,5 +801,5 @@ def _cartesian_dataframe(cursor, df1, df2):
         df1['_cartesian_ones'] = np.ones(len(df1))
     if '_cartesian_ones' not in df2:
         df2['_cartesian_ones'] = np.ones(len(df2))
-    return cursor.api.merge(df1, df2, on='_cartesian_ones')
+    return df1.merge(df2, on='_cartesian_ones')
 
